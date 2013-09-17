@@ -110,20 +110,18 @@ contains
   end subroutine init_checkpoint
 
 
-  function abort_now(name,C,initial_time) result(abort)
+  function abort_now(name,C) result(abort)
 
     use io, only : new_io_unit
-    use mpi_routines, only : current_time
+    use mpi_routines, only : time_elapsed
 
     implicit none
 
     character(*),intent(in) :: name
     type(checkpoint_type),intent(in) :: C
-    real,intent(in) :: initial_time
     logical :: abort
 
     integer :: unit,stat
-    real :: elapsed_time
 
     abort = .false.
 
@@ -139,8 +137,7 @@ contains
 
     ! check if elapsed time exceeds limit (with max_time in minutes)
     
-    elapsed_time = current_time()-initial_time
-    abort = (abort.or.(elapsed_time>=C%max_time*60d0))
+    abort = (abort.or.(time_elapsed()>=C%max_time*60d0))
 
   end function abort_now
 

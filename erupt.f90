@@ -532,7 +532,7 @@ contains
     ! add perturbation in momentum balance
 
     do i = ER%L%m,ER%L%p
-       ER%Dq(i,2) = ER%Dq(i,2)+1d6*exp(-0.5d0*((y(i)+750d0)/10d0)**2)*exp(-0.5d0*((t-20d0)/0.01d0)**2)
+       ER%Dq(i,2) = ER%Dq(i,2)+1d6*exp(-0.5d0*((y(i)+250d0)/10d0)**2)*exp(-0.5d0*((t-20d0)/0.01d0)**2)
     end do
 
     ! gas exsolution
@@ -866,7 +866,7 @@ contains
   end subroutine share_erupt
 
 
-  subroutine set_rates_erupt_old(ER,C,comm,t)
+  subroutine set_rates_erupt_old(ER,C,comm,t,m,p,y)
 
     use mpi_routines2d, only : cartesian
     use fd_coeff, only : DI,mI,pI,nbnd,nbst,reconstruct3,reconstruct5,reconstructW
@@ -886,14 +886,14 @@ contains
 
     type(er_type),intent(inout) :: ER
     type(cartesian),intent(in) :: C
-    integer,intent(in) :: comm
-    real,intent(in) :: t
+    integer,intent(in) :: comm,m,p
+    real,intent(in) :: t,y(m:p)
 
     integer :: i,j,im,ip,stencil,ierr
     real :: uav,cav,alpha(nq),alpha_send(nq),tau
     real,dimension(:,:),allocatable :: f,fe,lambda,fm,fp
     real,dimension(:,:,:),allocatable :: R,Ri
-    real,dimension(:),allocatable :: Df,Dw
+    real,dimension(:),allocatable :: Df,Dw,Dn
     character(1) :: location
 
     if (.not.ER%use_ER) return
@@ -904,7 +904,8 @@ contains
 
     ! allocate auxiliary arrays
 
-    allocate(f(ER%L%mb:ER%L%pb,nq),Df(ER%L%m:ER%L%p),Dw(ER%L%m:ER%L%p))
+    allocate(f(ER%L%mb:ER%L%pb,nq),Df(ER%L%m:ER%L%p), &
+         Dw(ER%L%m:ER%L%p),Dn(ER%L%m:ER%L%p))
 
     allocate(fe(ER%me:ER%pe,nq),lambda(ER%me:ER%pe,nq))
     allocate(R(ER%me:ER%pe,nq,nq),Ri(ER%me:ER%pe,nq,nq))
@@ -1089,28 +1090,33 @@ contains
 
     end select
 
-    ! add source term for variable width
+    ! source term for variable width
 
     call diff(ER%L,ER%w,Dw)
-    ER%Dq(:,2) = ER%Dq(:,2)+ER%p(ER%L%m:ER%L%p)*Dw/ER%dl
+    do i = ER%L%m,ER%L%p
+       ER%Dq(i,2) = ER%Dq(i,2)+ER%p(i)*Dw(i)/ER%dl(i)
+    end do
 
-    ! add source term for drag
+    ! wall shear stress and weight
 
     do i = ER%L%m,ER%L%p
        tau = wall_shear(ER%rho(i),ER%u(i),ER%w(i),ER%FL)
-       ER%Dq(i,2) = ER%Dq(i,2)-tau
+       ER%Dq(i,2) = ER%Dq(i,2)-tau-ER%rho(i)*ER%g*ER%w(i)
     end do
-
-    ! add source term for gravity
-    
-    if (ER%g/=0d0) ER%Dq(:,2) = ER%Dq(:,2)- &
-         ER%g*ER%rho(ER%L%m:ER%L%p)*ER%w(ER%L%m:ER%L%p)
 
     ! add perturbation in momentum balance
 
-    !do i = ER%L%m,ER%L%p
-    !   ER%Dq(i,2) = ER%Dq(i,2)+1d5*exp(-0.25d0*dble(i-20)**2)*exp(-0.04d0*(t-100d0)**2)
-    !end do
+    do i = ER%L%m,ER%L%p
+       ER%Dq(i,2) = ER%Dq(i,2)+1d6*exp(-0.5d0*((y(i)+750d0)/10d0)**2)*exp(-0.5d0*((t-20d0)/0.01d0)**2)
+    end do
+
+    ! gas exsolution
+
+    call diff(ER%L,ER%n,Dn)
+    do i = ER%L%m,ER%L%p
+       ER%Dn(i) = ER%Dn(i)-ER%u(i)*Dn(i)/ER%dl(i)- &
+            (ER%n(i)-n_eos(ER%FL,ER%p(i)))/ER%FL%Tex
+    end do
 
     ! add penalty terms to enforce BC with SAT method
 
@@ -1131,7 +1137,7 @@ contains
     ! deallocate temporary arrays
 
     deallocate(fe,lambda,R,Ri,fm,fp)
-    deallocate(f,Df,Dw)
+    deallocate(f,Df,Dw,Dn)
 
   end subroutine set_rates_erupt_old
 

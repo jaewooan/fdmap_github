@@ -13,7 +13,7 @@ module mpi_routines
        !ps=8, MPI_REAL_PS=MPI_DOUBLE_PRECISION
   logical :: is_master ! for MPI_COMM_WORLD
   integer :: nprocs,myid ! for MPI_COMM_WORLD
-  real :: starttime,endtime,oldtime,newtime
+  real :: time_start
 
   interface subarray
      module procedure subarray1d,subarray2d,subarray3d
@@ -36,37 +36,20 @@ contains
     call MPI_Comm_rank(MPI_COMM_WORLD,myid,ierr)
 
     is_master = (myid==master)
-    starttime = MPI_WTime()
-    oldtime = starttime
+    time_start = MPI_WTime()
 
   end subroutine start_mpi
 
 
-  subroutine clock_split(split_time,current_time)
-
-    use mpi
-
-    real,intent(out),optional :: split_time,current_time
-
-    newtime = MPI_WTime()
-    if (present(split_time)) split_time = newtime-oldtime
-    if (present(current_time)) current_time = newtime
-    if (is_master.and.(.not.present(split_time)).and.(.not.present(current_time))) &
-         write (stdout,'(/,a,g20.10,a,/)') 'Split time ',newtime-oldtime,' s'
-    oldtime = newtime
-
-  end subroutine clock_split
-
-
-  function current_time() result(t)
+  function time_elapsed() result(t)
 
     use mpi
 
     real :: t
 
-    t = MPI_WTime()
+    t = MPI_WTime()-time_start
 
-  end function current_time
+  end function time_elapsed
 
 
   subroutine finish_mpi
@@ -77,8 +60,8 @@ contains
 
     integer :: ierr
 
-    endtime = MPI_WTime()
-    if (is_master) write (stdout,'(/,a,g20.10,a)') 'Total MPI time ',endtime-starttime,' s'
+    if (is_master) write(stdout,'(/,a,g20.10,a)') &
+         'Total MPI time ',time_elapsed(),' s'
     call MPI_Finalize(ierr)
 
   end subroutine finish_mpi

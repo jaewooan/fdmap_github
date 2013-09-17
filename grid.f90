@@ -84,7 +84,7 @@ contains
     write(str,'(a,i0,a)') '!---BLOCK',iblock,'---'
     call seek_to_string(input,str)
     read(input,nml=grid_list,iostat=stat)
-    if (stat>0) call error('Error in grid_list','init_grid_block')
+    if (stat>0) call error('Error in grid_list','read_grid')
 
     write(str,'(i13)') iblock
     if (iblock_x==0) then
@@ -532,9 +532,6 @@ contains
              dx = abs(G%J(i,j)/sqrt(G%xr(i,j)**2+G%yr(i,j)**2))
              dy = abs(G%J(i,j)/sqrt(G%xq(i,j)**2+G%yq(i,j)**2))
              G%hmin = min(G%hmin,dx,dy)
-             ! if(G%hmin < 4d-6) then
-             !   print*,i,j
-             ! end if
              G%hmax = max(G%hmax,dx,dy)
          end do
        end do
@@ -593,41 +590,6 @@ contains
     end if
 
   end subroutine init_grid_partials
-
-
-  subroutine grid_spacing(C,G)
-
-    use io, only : error
-    use mpi_routines2d, only : cartesian
-    use mpi_routines, only : MPI_REAL_PW
-    use mpi
-
-    implicit none
-
-    type(cartesian),intent(in) :: C
-    type(grid_type),intent(inout) :: G
-
-    integer :: ierr
-    real :: hmin,hmax
-    
-    ! minimum/maximum grid spacing over all processors
-
-    !write(6,*) 'before',G%hmin,G%hmax
-
-    ! MPI_IN_PLACE broken on OpenMPI for Mac
-    !call MPI_Allreduce(MPI_IN_PLACE,G%hmin,1,MPI_REAL_PW,MPI_MIN,C%c2d%comm,ierr)
-    !call MPI_Allreduce(MPI_IN_PLACE,G%hmax,1,MPI_REAL_PW,MPI_MAX,C%c2d%comm,ierr)
-
-    hmin = G%hmin
-    hmax = G%hmax
-    call MPI_Allreduce(hmin,G%hmin,1,MPI_REAL_PW,MPI_MIN,C%c2d%comm,ierr)
-    call MPI_Allreduce(hmax,G%hmax,1,MPI_REAL_PW,MPI_MAX,C%c2d%comm,ierr)
-
-    if (G%hmin<=0d0) call error('Minimum grid spacing must be positive','grid_spacing')
-
-    !write(6,*) 'after ',G%hmin,G%hmax
-
-  end subroutine grid_spacing
 
 
   subroutine destroy_grid(G,B)

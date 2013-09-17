@@ -22,7 +22,10 @@ module mpi_routines2d
      integer :: line_x,line_y,block_x,block_y
   end type cartesian
 
-
+  interface allocate_array_body
+     module procedure allocate_array_body_2d,allocate_array_body_3d
+  end interface
+  
 contains
 
 
@@ -534,6 +537,57 @@ contains
     call subarray(C%nx,C%ny,nF,C%mx,C%px,C%my,C%py,1,nF,MPI_REAL_PS,C%c2d%arrayF_s)
 
   end subroutine decompose2d
+
+
+  subroutine allocate_array_body_2d(F,C,ghost_nodes,Fval)
+
+    implicit none
+
+    real,dimension(:,:),allocatable,intent(inout) :: F
+    type(cartesian),intent(in) :: C
+    logical,intent(in) :: ghost_nodes
+    real,intent(in),optional :: Fval
+
+    if (.not.allocated(F)) then
+       if (ghost_nodes) then
+          allocate(F(C%mbx:C%pbx,C%mby:C%pby))
+       else
+          allocate(F(C%mx :C%px ,C%my :C%py ))
+       end if
+       if (present(Fval)) then
+          F = Fval
+       else
+          F = 1d40
+       end if
+    end if
+
+  end subroutine allocate_array_body_2d
+
+
+  subroutine allocate_array_body_3d(F,C,nF,ghost_nodes,Fval)
+
+    implicit none
+
+    real,dimension(:,:,:),allocatable,intent(inout) :: F
+    type(cartesian),intent(in) :: C
+    integer,intent(in) :: nF
+    logical,intent(in) :: ghost_nodes
+    real,intent(in),optional :: Fval
+
+    if (.not.allocated(F)) then
+       if (ghost_nodes) then
+          allocate(F(C%mbx:C%pbx,C%mby:C%pby,nF))
+       else
+          allocate(F(C%mx :C%px ,C%my :C%py ,nF))
+       end if
+       if (present(Fval)) then
+          F = Fval
+       else
+          F = 1d40
+       end if
+    end if
+
+  end subroutine allocate_array_body_3d
 
 
 end module mpi_routines2d

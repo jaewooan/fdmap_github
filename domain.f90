@@ -1,17 +1,17 @@
 module domain
 
-  use material, only : block_material
+  use material, only : block_material,elastic_type
   use grid, only : block_grid,grid_type
   use fields, only : block_fields,fields_type
   use boundaries, only : block_boundaries,iface_type
   use mpi_routines2d, only : cartesian
-  use gravity, only : gravity_type
+  use source, only : source_type
 
   implicit none
 
   type :: block_type
      logical :: dissipation
-     real :: c_dissipation
+     real :: Cdiss
      type(block_material) :: M
      type(block_grid) :: G
      type(block_fields) :: F
@@ -23,13 +23,14 @@ module domain
      integer :: mode,nblocks_x,nblocks_y,nblocks,nifaces,n
      character(10) :: FDmethod
      character(16) :: method
-     real :: t,tD
+     real :: t
      type(block_type),allocatable :: B(:)
      type(iface_type),allocatable :: I(:)
      type(grid_type) :: G
+     type(elastic_type) :: E
      type(fields_type) :: F
      type(cartesian) :: C
-     type(gravity_type) :: grav
+     type(source_type) :: S
   end type domain_type
 
 
@@ -38,14 +39,13 @@ contains
 
   subroutine init_domain(D,t,refine,CFL,dt,input,echo,cRK)
 
-    use material, only : init_material, init_pml
-    use grid, only : read_grid,block_limits,init_grid,init_grid_partials,grid_spacing
-    use fields, only : init_fields,exchange_fields,init_fields_side_rate
+    use material, only : init_material,init_pml
+    use grid, only : read_grid,block_limits,init_grid,init_grid_partials
+    use fields, only : init_fields,exchange_fields
     use boundaries, only : init_iface,init_iface_blocks,init_iface_fields, &
-         init_boundaries,apply_bc
-    use fault, only : couple_blocks
+         init_boundaries
     use fd_coeff, only : init_fd
-    use gravity , only : init_gravity
+    use source , only : init_source
     use mpi_routines2d, only : decompose2d,exchange_all_neighbors
     use mpi_routines, only : is_master
     use io, only : error,write_matlab,message,messages,seek_to_string
@@ -60,20 +60,19 @@ contains
     integer :: i,im,ip,mode,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,nF,nprocs_x,nprocs_y,stat
     integer,dimension(:),allocatable :: blkxm,blkym
-    real :: cs,c_dissipation
+    real :: Cdiss
     real,allocatable :: dtRK(:)
     character(10) :: FDmethod
     character(6) :: mpi_method
-    character(16) :: method
     character(256) :: str1,str2,str3,str
-    logical :: operator_split,decomposition_info,energy_balance,displacement,exact_metric
+    logical :: operator_split,decomposition_info,energy_balance,displacement,peak,exact_metric
     logical,parameter :: periodic_x=.false.,periodic_y=.false.
 
     namelist /domain_list/ mode,FDmethod,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,mpi_method,nprocs_x,nprocs_y,decomposition_info,operator_split, &
-         energy_balance,displacement,method,exact_metric
+         energy_balance,displacement,exact_metric,peak
 
-    namelist /operator_list/ c_dissipation
+    namelist /operator_list/ Cdiss
 
     ! defaults
 
@@ -92,8 +91,7 @@ contains
 
     energy_balance = .false.
     displacement   = .false.
-
-    method = 'corrected'
+    peak           = .false.
 
     mpi_method = '2d'
     nprocs_x = 1
@@ -129,8 +127,6 @@ contains
 
     D%operator_split = operator_split
 
-    D%method = method
-
     ! initial time
 
     D%t = t
@@ -156,19 +152,19 @@ contains
 
     do i = 1,D%nblocks
 
-       c_dissipation = 0d0 ! default
+       Cdiss = 0d0 ! default
 
        write(str,'(a,i0,a)') '!---BLOCK',i,'---'
        call seek_to_string(input,str)
        read(input,nml=operator_list,iostat=stat)
        if (stat>0) call error('Error in operator_list','init_domain')
 
-       D%B(i)%c_dissipation = c_dissipation
-       D%B(i)%dissipation = (c_dissipation>0d0)
+       D%B(i)%Cdiss = Cdiss
+       D%B(i)%dissipation = (Cdiss>0d0)
 
        if (is_master) then
           write(str,'(a,i0,a)') 'B{',i,'}'
-          call write_matlab(echo,'c_dissipation',D%B(i)%c_dissipation,str)
+          call write_matlab(echo,'Cdiss',D%B(i)%Cdiss,str)
        end if
 
     end do
@@ -225,8 +221,6 @@ contains
        call init_grid_partials(D%B(i)%G,D%G,D%exact_metric)
     end do
 
-    call grid_spacing(D%C,D%G)
-
     call exchange_all_neighbors(D%C,D%G%xq)
     call exchange_all_neighbors(D%C,D%G%xr)
     call exchange_all_neighbors(D%C,D%G%yq)
@@ -247,50 +241,30 @@ contains
     ! initialize blocks (material properties, initial fields, etc.)
 
     do i = 1,D%nblocks
-       call init_material(i,D%B(i)%M,input,echo)
+       call init_material(i,D%B(i)%M,D%E,D%C,input,echo)
        call init_pml(i,D%B(i)%M,input,echo)
        call init_boundaries(i,D%B(i)%B,input,echo)
        call init_fields(D%mode,i,D%C,D%B(i)%G,D%G,D%B(i)%F,D%F,D%t, &
-            input,D%B(i)%M%response,energy_balance,displacement, &
-            D%B(i)%M,D%B(i)%M%pmlx,D%B(i)%M%pmly)
-       call interior_to_edges(D%B(i)%G,D%F,D%B(i)%F)
-       call apply_bc(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%B(i)%M,D%mode,D%t,i)
+            input,energy_balance,displacement,peak, &
+            D%B(i)%M,D%B(i)%M%pml%pmlx,D%B(i)%M%pml%pmly)
+       call init_edges(D%B(i)%G,D%G,D%B(i)%M,D%E,D%B(i)%F)
     end do
 
     call exchange_fields(D%C,D%F)
 
-    ! gravity parameters
+    ! source term parameters
 
-    call init_gravity(D%grav,input,echo)
+    call init_source(D%S,input,echo)
 
     ! time step and CFL parameter
 
-    cs = 0d0
+    call set_dt(D,refine,CFL,dt)
+
+    ! artificial dissipation, scaled as ~(wave speed)/(grid spacing)
+
     do i = 1,D%nblocks
-       cs = max(cs,D%B(i)%M%cs)
+       D%B(i)%Cdiss = D%B(i)%Cdiss*CFL/dt
     end do
-
-    dt = dt/refine
-
-    if (CFL==0d0) then
-       if (dt==0d0) then ! default values
-          CFL = 0.5d0
-          dt = CFL*D%G%hmin/cs
-       else ! set CFL using dt
-          CFL = cs*dt/D%G%hmin
-       end if
-    else
-       if (dt==0d0) then ! set dt using CFL
-          dt = CFL*D%G%hmin/cs
-       else ! both dt and CFL input, default to dt
-          call message('Both dt and CFL specified; defaulting to dt','init')
-          CFL = cs*dt/D%G%hmin
-       end if
-    end if
-    if (CFL>1d0) then
-      write(str,'(a,e,a)') 'Using CFL=',CFL,'>1; numerical instability likely'
-      call message(str,'init')
-    end if
 
     ! Runge-Kutta stage lengths
 
@@ -310,21 +284,21 @@ contains
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
        call init_iface_fields(i,D%I(i),refine,input,echo,dtRK)
-       call exchange_fields_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
-       ! JK: Maybe not the best place for this!
-       if(D%I(i)%bndr_rates) then
-         select case(D%I(i)%direction)
-         case('x')
-           call init_fields_side_rate(D%B(im)%F%bndFR)
-           call init_fields_side_rate(D%B(ip)%F%bndFL)
-         case('y')
-           call init_fields_side_rate(D%B(im)%F%bndFT)
-           call init_fields_side_rate(D%B(ip)%F%bndFB)
-         end select
-       end if
-       call couple_blocks(D%I(i),D%B(im)%F,D%B(ip)%F,D%B(im)%M,D%B(ip)%M, &
-            D%C,D%mode,D%t,initialize=.true.)
     end do
+
+    ! enforce boundary and interface conditions (set hat variables)
+
+    call prepare_edges(D)
+
+    ! initialize interfaces (SAT)
+
+    do i = 1,D%nifaces
+       im = D%I(i)%iblockm
+       ip = D%I(i)%iblockp
+       call exchange_SAT_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
+    end do
+
+    call enforce_edge_conditions(D,initialize=.true.)
 
     deallocate(dtRK)
 
@@ -333,8 +307,7 @@ contains
     if (is_master) then
        call write_matlab(echo,'mode',D%mode)
        call write_matlab(echo,'FDmethod',D%FDmethod)
-       call write_matlab(echo,'method',D%method)
-       call write_matlab(echo,'c_dissipation',c_dissipation)
+       call write_matlab(echo,'Cdiss',Cdiss)
        call write_matlab(echo,'nblocks',D%nblocks)
        call write_matlab(echo,'nifaces',D%nifaces)
        call write_matlab(echo,'nx',D%C%nx)
@@ -355,6 +328,7 @@ contains
     use fd_coeff, only : destroy_fd
     use grid, only : destroy_grid
     use fields, only : destroy_block_fields,destroy_fields
+    use material, only : destroy_elastic
     use boundaries, only : destroy_iface
 
     implicit none
@@ -377,8 +351,59 @@ contains
     deallocate(D%I)
 
     call destroy_fields(D%F)
+    call destroy_elastic(D%E)
 
   end subroutine finish_domain
+
+
+  subroutine prepare_edges(D)
+
+    implicit none
+
+    type(domain_type),intent(inout) :: D
+
+    integer :: i,im,ip
+    
+    do i = 1,D%nblocks
+       call interior_to_edges(D%B(i)%G,D%F,D%B(i)%F)
+    end do
+    do i = 1,D%nifaces
+       im = D%I(i)%iblockm
+       ip = D%I(i)%iblockp
+       call exchange_fields_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
+    end do
+
+  end subroutine prepare_edges
+
+
+  subroutine enforce_edge_conditions(D,initialize)
+    
+    use boundaries, only : apply_bc
+    use fault, only : couple_blocks
+
+    implicit none
+
+    type(domain_type),intent(inout) :: D
+    logical,intent(in) :: initialize
+
+    integer :: i,im,ip
+    
+    ! adjust fields on boundaries to satisfy bc
+    
+    do i = 1,D%nblocks
+       call apply_bc(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%mode,D%t,i)
+    end do
+    
+    ! adjust fields on interfaces to satisfy jump conditions
+    ! (and set state rate)
+    
+    do i = 1,D%nifaces
+       im = D%I(i)%iblockm
+       ip = D%I(i)%iblockp
+       call couple_blocks(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t,initialize)
+    end do
+    
+  end subroutine enforce_edge_conditions
 
 
   subroutine check_nucleation(D,minV,slipping)
@@ -444,10 +469,28 @@ contains
           call write_file_distributed(fh,D%G%yr(mx:px:sx,my:py:sy))
        case('J')
           call write_file_distributed(fh,D%G%J(mx:px:sx,my:py:sy))
+       case('rho')
+          call write_file_distributed(fh,D%E%rho(mx:px:sx,my:py:sy))
+       case('cs')
+          call write_file_distributed(fh,D%E%cs(mx:px:sx,my:py:sy))
+       case('cp')
+          call write_file_distributed(fh,D%E%cp(mx:px:sx,my:py:sy))
+       case('G')
+          call write_file_distributed(fh,D%E%G(mx:px:sx,my:py:sy))
+       case('M')
+          call write_file_distributed(fh,D%E%M(mx:px:sx,my:py:sy))
+       case('gamma')
+          call write_file_distributed(fh,D%E%gamma(mx:px:sx,my:py:sy))
+       case('nu')
+          call write_file_distributed(fh,D%E%nu(mx:px:sx,my:py:sy))
        case('ux','uz')
           call write_file_distributed(fh,D%F%U(mx:px:sx,my:py:sy,1))
        case('uy')
           call write_file_distributed(fh,D%F%U(mx:px:sx,my:py:sy,2))
+       case('pga')
+          call write_file_distributed(fh,D%F%pga(mx:px:sx,my:py:sy,1))
+       case('pgv')
+          call write_file_distributed(fh,D%F%pgv(mx:px:sx,my:py:sy,1))
        case('vx','vz')
           call write_file_distributed(fh,D%F%F(mx:px:sx,my:py:sy,1))
        case('vy','sxz')
@@ -466,6 +509,20 @@ contains
           call write_file_distributed(fh,D%F%gammap(mx:px:sx,my:py:sy))
        case('F')
           call write_file_distributed(fh,D%F%F(mx:px:sx,my:py:sy,:))
+       case('EP')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,:))
+       case('epxx')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,1))
+       case('epxy')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,2))
+       case('epxz')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,3))
+       case('epyy')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,4))
+       case('epyz')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,5))
+       case('epzz')
+          call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,6))
        end select
 
     case('ifacex','point_ifacex')
@@ -614,6 +671,66 @@ contains
           call write_file_distributed(fh,D%I(i)%ER%q(mx:px:sx,2))
        end select
 
+    case('bndL')
+
+       select case(field)
+       case default
+          call error('Field ' // trim(field) // ' not defined','get_field')
+       case('x')
+          call write_file_distributed(fh,D%B(i)%G%bndL%x(my:py:sy))
+       case('y')
+          call write_file_distributed(fh,D%B(i)%G%bndL%y(my:py:sy))
+       case('ux')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,1))
+       case('uy')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,2))
+       end select
+
+    case('bndR')
+
+       select case(field)
+       case default
+          call error('Field ' // trim(field) // ' not defined','get_field')
+       case('x')
+          call write_file_distributed(fh,D%B(i)%G%bndR%x(my:py:sy))
+       case('y')
+          call write_file_distributed(fh,D%B(i)%G%bndR%y(my:py:sy))
+       case('ux')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,1))
+       case('uy')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,2))
+       end select
+
+    case('bndB')
+
+       select case(field)
+       case default
+          call error('Field ' // trim(field) // ' not defined','get_field')
+       case('x')
+          call write_file_distributed(fh,D%B(i)%G%bndB%x(mx:px:sx))
+       case('y')
+          call write_file_distributed(fh,D%B(i)%G%bndB%y(mx:px:sx))
+       case('ux')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,1))
+       case('uy')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,2))
+       end select
+
+    case('bndT')
+
+       select case(field)
+       case default
+          call error('Field ' // trim(field) // ' not defined','get_field')
+       case('x')
+          call write_file_distributed(fh,D%B(i)%G%bndT%x(mx:px:sx))
+       case('y')
+          call write_file_distributed(fh,D%B(i)%G%bndT%y(mx:px:sx))
+       case('ux')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,1))
+       case('uy')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,2))
+       end select
+
     case('Eblock')
 
        select case(field)
@@ -684,12 +801,32 @@ contains
           ok = allocated(D%G%yr)
        case('J')
           ok = allocated(D%G%J)
+       case('rho')
+          ok = allocated(D%E%rho)
+       case('cs')
+          ok = allocated(D%E%cs)
+       case('cp')
+          ok = allocated(D%E%cp)
+       case('G')
+          ok = allocated(D%E%G)
+       case('M')
+          ok = allocated(D%E%M)
+       case('gamma')
+          ok = allocated(D%E%gamma)
+       case('nu')
+          ok = allocated(D%E%nu)
        case('ux','uz')
           ok = allocated(D%F%U)
           if (ok) ok = within(lbound(D%F%U,3),1,ubound(D%F%U,3))
        case('uy')
           ok = allocated(D%F%U)
           if (ok) ok = within(lbound(D%F%U,3),2,ubound(D%F%U,3))
+       case('pga')
+          ok = allocated(D%F%pga)
+          if (ok) ok = within(lbound(D%F%pga,3),1,ubound(D%F%pga,3))
+       case('pgv')
+          ok = allocated(D%F%pgv)
+          if (ok) ok = within(lbound(D%F%pgv,3),1,ubound(D%F%pgv,3))
        case('vx','vz')
           ok = allocated(D%F%F)
           if (ok) ok = within(lbound(D%F%F,3),1,ubound(D%F%F,3))
@@ -714,6 +851,24 @@ contains
           ok = allocated(D%F%gammap)
        case('F')
           ok = allocated(D%F%F)
+       case('epxx')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),1,ubound(D%F%EP,3))
+       case('epxy')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),2,ubound(D%F%EP,3))
+       case('epxz')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),3,ubound(D%F%EP,3))
+       case('epyy')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),4,ubound(D%F%EP,3))
+       case('epyz')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),5,ubound(D%F%EP,3))
+       case('epzz')
+          ok = allocated(D%F%EP)
+          if (ok) ok = within(lbound(D%F%EP,3),6,ubound(D%F%EP,3))
        end select
 
     case('ifacex','point_ifacex','ifacey','point_ifacey')
@@ -789,6 +944,58 @@ contains
           ok = allocated(D%I(i)%ER%q)
        end select
 
+    case('bndL')
+
+       select case(field)
+       case default
+          ok = .false.
+       case('x')
+          ok = allocated(D%B(i)%G%bndL%x)
+       case('y')
+          ok = allocated(D%B(i)%G%bndL%y)
+       case('ux','uy')
+          ok = .true.
+       end select
+
+    case('bndR')
+
+       select case(field)
+       case default
+          ok = .false.
+       case('x')
+          ok = allocated(D%B(i)%G%bndR%x)
+       case('y')
+          ok = allocated(D%B(i)%G%bndR%y)
+       case('ux','uy')
+          ok = .true.
+       end select
+
+    case('bndB')
+
+       select case(field)
+       case default
+          ok = .false.
+       case('x')
+          ok = allocated(D%B(i)%G%bndB%x)
+       case('y')
+          ok = allocated(D%B(i)%G%bndB%y)
+       case('ux','uy')
+          ok = .true.
+       end select
+
+    case('bndT')
+
+       select case(field)
+       case default
+          ok = .false.
+       case('x')
+          ok = allocated(D%B(i)%G%bndT%x)
+       case('y')
+          ok = allocated(D%B(i)%G%bndT%y)
+       case('ux','uy')
+          ok = .true.
+       end select
+
     case('Eblock')
 
        select case(field)
@@ -805,43 +1012,6 @@ contains
 
   end subroutine check_field
 
-
-  subroutine exchange_rates_field_edge(I,C,Fm,Fp)
-
-    use fields, only : block_fields
-    use mpi_routines2d,only : cartesian,exchange_edge
-
-    implicit none
-
-    type(iface_type),intent(in) :: I
-    type(cartesian),intent(in) :: C
-    type(block_fields),intent(inout) :: Fm,Fp
-
-    integer :: l,nF
-
-    if (.not.I%share) return ! no need to share fields
-
-    ! initialize arrays in blocks not handled by process
-    ! with values from neighboring process
-
-    select case(I%direction)
-    case('x')
-       if (.not.allocated(Fm%bndFR%DF)) return
-       nF = size(Fm%bndFR%DF,2)
-       do l = 1,nF
-          call exchange_edge(C,I%m,I%p,Fm%bndFR%DF(I%m:I%p,l),Fp%bndFL%DF(I%m:I%p,l), &
-               I%rank_m,I%rank_p,'x')
-       end do
-    case('y')
-       if (.not.allocated(Fm%bndFT%DF)) return
-       nF = size(Fm%bndFT%DF,2)
-       do l = 1,nF
-          call exchange_edge(C,I%m,I%p,Fm%bndFT%DF(I%m:I%p,l),Fp%bndFB%DF(I%m:I%p,l), &
-               I%rank_m,I%rank_p,'y')
-       end do
-    end select
-
-  end subroutine exchange_rates_field_edge
 
   subroutine exchange_fields_edges(I,C,Fm,Fp)
 
@@ -919,11 +1089,44 @@ contains
   end subroutine exchange_grid_edges
 
 
+  subroutine exchange_SAT_edges(I,C,Fm,Fp)
+
+    use fields, only : block_fields
+    use mpi_routines2d,only : cartesian,exchange_edge
+
+    implicit none
+
+    type(iface_type),intent(in) :: I
+    type(cartesian),intent(in) :: C
+    type(block_fields),intent(inout) :: Fm,Fp
+
+    integer :: l
+
+    if (.not.I%share) return ! no need to share fields
+
+    ! initialize SAT-related arrays in blocks not handled by process
+    ! with values from neighboring process
+
+    select case(I%direction)
+    case('x')
+       do l = 1,ubound(Fm%bndFR%M,2)
+          call exchange_edge(C,I%m,I%p,Fm%bndFR%M(I%m:I%p,l),Fp%bndFL%M(I%m:I%p,l), &
+               I%rank_m,I%rank_p,'x')
+       end do
+    case('y')
+       do l = 1,ubound(Fm%bndFT%M,2)
+          call exchange_edge(C,I%m,I%p,Fm%bndFT%M(I%m:I%p,l),Fp%bndFB%M(I%m:I%p,l), &
+               I%rank_m,I%rank_p,'y')
+       end do
+    end select
+
+  end subroutine exchange_SAT_edges
+
+
   subroutine interior_to_edges(B,F,BF)
 
     use grid, only : block_grid
     use fields, only : fields_type,block_fields
-    use io, only : error
 
     implicit none
 
@@ -943,41 +1146,194 @@ contains
 
   end subroutine interior_to_edges
 
-  subroutine interior_rates_to_edges(B,F,BF,A)
 
-    use grid, only : block_grid
-    use fields, only : fields_type,block_fields
+  subroutine init_edges(B,G,M,E,BF)
+
+    use grid, only : block_grid,grid_type
+    use material, only : elastic_type,block_material
+    use fields, only : block_fields
+    use fd_coeff, only : H00i
     use io, only : error
-    use mpi_routines, only : myid
 
     implicit none
 
     type(block_grid),intent(in) :: B
-    type(fields_type),intent(in) :: F
+    type(grid_type),intent(in) :: G
+    type(block_material),intent(in) :: M
+    type(elastic_type),intent(in) :: E
     type(block_fields),intent(inout) :: BF
-    real,intent(in) :: A
 
-    ! if (B%skip) return ! process has no cells in this block
+    integer :: i,j
+    real :: rho,cs,cp
 
-    ! Store last scaled rate and copy over new (unscaled) rate
-    if (allocated(BF%bndFL%DF)) then
-      BF%bndFL%DF2 = A*BF%bndFL%DF
-      if(B%sideL.and.B%nx/=1) BF%bndFL%DF  = F%DF(B%mgx,B%my:B%py,:)
-    end if
-    if (allocated(BF%bndFR%DF)) then
-      BF%bndFR%DF2 = A*BF%bndFR%DF
-      if(B%sideR.and.B%nx/=1) BF%bndFR%DF  = F%DF(B%pgx,B%my:B%py,:)
-    end if
-    if (allocated(BF%bndFB%DF)) then
-      BF%bndFB%DF2 = A*BF%bndFB%DF
-      if(B%sideB.and.B%ny/=1) BF%bndFB%DF  = F%DF(B%mx:B%px,B%mgy,:)
-    end if
-    if (allocated(BF%bndFT%DF)) then
-      BF%bndFT%DF2 = A*BF%bndFT%DF
-      if(B%sideT.and.B%ny/=1) BF%bndFT%DF  = F%DF(B%mx:B%px,B%pgy,:)
+    ! transfer material properties to boundaries
+    ! for use in setting boundary conditions
+
+    if (B%skip) return ! process has no cells in this block
+
+    ! M(1) = Zs = rho*cs
+    ! M(2) = Zp = rho*cp
+    ! M(3) = gamma = 1-2*(cs/cp)**2
+    ! M(4) = cs*H00i/h (SAT penalty for S waves)
+    ! M(5) = cp*H00i/h (SAT penalty for P waves)
+
+    if (B%sideL.and.B%nx/=1) then
+       i = B%mgx
+       do j = B%my,B%py
+          if (M%heterogeneous) then
+             rho = E%rho(i,j)
+             cs  = E%cs (i,j)
+             cp  = E%cp (i,j)
+          else
+             rho = M%rho
+             cs  = M%cs
+             cp  = M%cp
+          end if
+          BF%bndFL%M(j,1) = rho*cs
+          BF%bndFL%M(j,2) = rho*cp
+          BF%bndFL%M(j,3) = 1d0-2d0*(cs/cp)**2
+          BF%bndFL%M(j,4) = H00i*cs*sqrt(G%xr(i,j)**2+G%yr(i,j)**2)/G%J(i,j)
+          BF%bndFL%M(j,5) = H00i*cp*sqrt(G%xr(i,j)**2+G%yr(i,j)**2)/G%J(i,j)
+       end do
     end if
 
-  end subroutine interior_rates_to_edges
+    if (B%sideR.and.B%nx/=1) then
+       i = B%pgx
+       do j = B%my,B%py
+          if (M%heterogeneous) then
+             rho = E%rho(i,j)
+             cs  = E%cs (i,j)
+             cp  = E%cp (i,j)
+          else
+             rho = M%rho
+             cs  = M%cs
+             cp  = M%cp
+          end if
+          BF%bndFR%M(j,1) = rho*cs
+          BF%bndFR%M(j,2) = rho*cp
+          BF%bndFR%M(j,3) = 1d0-2d0*(cs/cp)**2
+          BF%bndFR%M(j,4) = H00i*cs*sqrt(G%xr(i,j)**2+G%yr(i,j)**2)/G%J(i,j)
+          BF%bndFR%M(j,5) = H00i*cp*sqrt(G%xr(i,j)**2+G%yr(i,j)**2)/G%J(i,j)
+      end do
+    end if
+
+    if (B%sideB.and.B%ny/=1) then
+       j = B%mgy
+       do i = B%mx,B%px
+          if (M%heterogeneous) then
+             rho = E%rho(i,j)
+             cs  = E%cs (i,j)
+             cp  = E%cp (i,j)
+          else
+             rho = M%rho
+             cs  = M%cs
+             cp  = M%cp
+          end if
+          BF%bndFB%M(i,1) = rho*cs
+          BF%bndFB%M(i,2) = rho*cp
+          BF%bndFB%M(i,3) = 1d0-2d0*(cs/cp)**2
+          BF%bndFB%M(i,4) = H00i*cs*sqrt(G%xq(i,j)**2+G%yq(i,j)**2)/G%J(i,j)
+          BF%bndFB%M(i,5) = H00i*cp*sqrt(G%xq(i,j)**2+G%yq(i,j)**2)/G%J(i,j)
+       end do
+    end if
+
+    if (B%sideT.and.B%ny/=1) then
+       j = B%pgy
+       do i = B%mx,B%px
+          if (M%heterogeneous) then
+             rho = E%rho(i,j)
+             cs  = E%cs (i,j)
+             cp  = E%cp (i,j)
+          else
+             rho = M%rho
+             cs  = M%cs
+             cp  = M%cp
+          end if
+          BF%bndFT%M(i,1) = rho*cs
+          BF%bndFT%M(i,2) = rho*cp
+          BF%bndFT%M(i,3) = 1d0-2d0*(cs/cp)**2
+          BF%bndFT%M(i,4) = H00i*cs*sqrt(G%xq(i,j)**2+G%yq(i,j)**2)/G%J(i,j)
+          BF%bndFT%M(i,5) = H00i*cp*sqrt(G%xq(i,j)**2+G%yq(i,j)**2)/G%J(i,j)
+       end do
+    end if
+
+  end subroutine init_edges
+
+
+  subroutine set_dt(D,refine,CFL,dt)
+
+    use io, only : message,error
+    use mpi_routines, only : MPI_REAL_PW
+    use mpi
+
+    implicit none
+
+    type(domain_type),intent(inout) :: D
+    real,intent(in) :: refine
+    real,intent(inout) :: CFL,dt
+
+    integer :: i,ierr
+    real :: hmin,hmax,cs,cs_local,cp,cp_local,c
+    character(256) :: str
+
+    ! minimum/maximum grid spacing over all processors
+
+    !write(6,*) 'before',D%G%hmin,D%G%hmax
+
+    ! MPI_IN_PLACE broken on OpenMPI for Mac
+    !call MPI_Allreduce(MPI_IN_PLACE,D%G%hmin,1,MPI_REAL_PW,MPI_MIN,D%C%c2d%comm,ierr)
+    !call MPI_Allreduce(MPI_IN_PLACE,D%G%hmax,1,MPI_REAL_PW,MPI_MAX,CD%%c2d%comm,ierr)
+
+    hmin = D%G%hmin
+    hmax = D%G%hmax
+    call MPI_Allreduce(hmin,D%G%hmin,1,MPI_REAL_PW,MPI_MIN,D%C%c2d%comm,ierr)
+    call MPI_Allreduce(hmax,D%G%hmax,1,MPI_REAL_PW,MPI_MAX,D%C%c2d%comm,ierr)
+
+    if (D%G%hmin<=0d0) &
+         call error('Minimum grid spacing must be positive','set_dt')
+
+    !write(6,*) 'after ',D%G%hmin,D%G%hmax
+
+    ! maximum wave speeds
+
+    if (allocated(D%E%rho)) then ! heterogeneous properties
+       cs_local = maxval(D%E%cs(D%C%mx:D%C%px,D%C%my:D%C%py))
+       cp_local = maxval(D%E%cp(D%C%mx:D%C%px,D%C%my:D%C%py))
+       call MPI_Allreduce(cs_local,cs,1,MPI_REAL_PW,MPI_MAX,D%C%c2d%comm,ierr)
+       call MPI_Allreduce(cp_local,cp,1,MPI_REAL_PW,MPI_MAX,D%C%c2d%comm,ierr)
+    else
+       cs = 0d0; cp = 0d0
+       do i = 1,D%nblocks
+          cs = max(cs,D%B(i)%M%cs)
+          cp = max(cp,D%B(i)%M%cp)
+       end do
+    end if
+
+    c = sqrt(cs**2+cp**2) ! gives appropriate results when cs=0 or cp=0
+    
+    dt = dt/refine
+
+    if (CFL==0d0) then
+       if (dt==0d0) then ! default values
+          CFL = 0.5d0
+          dt = CFL*D%G%hmin/c
+       else ! set CFL using dt
+          CFL = c*dt/D%G%hmin
+       end if
+    else
+       if (dt==0d0) then ! set dt using CFL
+          dt = CFL*D%G%hmin/c
+       else ! both dt and CFL input, default to dt
+          call message('Both dt and CFL specified; defaulting to dt','init')
+          CFL = c*dt/D%G%hmin
+       end if
+    end if
+    if (CFL>1d0) then
+      write(str,'(a,f0.4,a)') 'Using CFL=',CFL,'>1; numerical instability likely'
+      call message(str,'init')
+    end if
+
+  end subroutine set_dt
 
 
 end module domain

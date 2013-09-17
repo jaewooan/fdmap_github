@@ -8,10 +8,11 @@ module boundaries
 
   type :: block_boundaries
      character(24) :: bcL,bcR,bcB,bcT
+     real :: rhog ! for tsunami calculations, not ideal place to store this, but easy
   end type block_boundaries
 
   type :: iface_type
-     logical :: skip,share,process_m,process_p,output_process,energy_balance,bndr_rates
+     logical :: skip,share,process_m,process_p,output_process,energy_balance
      character(24) :: coupling
      character(1) :: direction
      integer :: iblockm,iblockp,m,p,mg,pg,mb,pb, &
@@ -257,13 +258,15 @@ contains
 
     ! initialize various interface models
 
-    I%bndr_rates = .false.
     call init_friction( iface,I%FR,I%m,I%p,input,echo,I%skip, &
-         I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w,I%bndr_rates)
+         I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
     call init_thermpres(iface,I%TP,I%m,I%p,input,echo,I%skip,refine,dt)
     if (I%skip) then
-       call init_erupt( iface,I%ER,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
-            I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w) ! otherwise error since dl not allocated
+       ! commented this because I%x was not always allocated (DEBUG THIS)
+       ! could use allocatable attribute when passing x,y,dl to init_erupt
+       ! another idea is to always allocate I%x, but with zero length when I%skip=true
+       !call init_erupt( iface,I%ER,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
+       !     I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w) ! otherwise error since dl not allocated
     else
        call init_erupt( iface,I%ER,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
             I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w,I%dl)
@@ -378,6 +381,7 @@ contains
 
   end subroutine checkpoint_iface
 
+
   subroutine scale_rates_iface(I,A)
 
     use friction, only : scale_rates_friction
@@ -389,29 +393,27 @@ contains
     real,intent(in) :: A
 
     if (I%skip) return
-    if (I%energy_balance) I%DE   = A*I%DE
+
+    if (I%energy_balance) I%DE = A*I%DE
+
     select case(I%coupling)
     case('friction')
-       call scale_rates_friction( I%FR,A)
+       call scale_rates_friction(I%FR,A)
     case('eruption')
-       call scale_rates_erupt(    I%ER,A)
+       call scale_rates_erupt(   I%ER,A)
     end select
 
   end subroutine scale_rates_iface
 
 
-  subroutine update_fields_iface(I,dt,t,t2,Fm,Fp,Mm,Mp,A)
-    use fields, only : block_fields
+  subroutine update_fields_iface(I,dt)
+
     use friction, only : update_fields_friction
-    use erupt, only : update_fields_erupt
-    use material, only : block_material
 
     implicit none
 
     type(iface_type),intent(inout) :: I
-    type(block_fields),intent(in) :: Fm,Fp
-    type(block_material),intent(in) :: Mm,Mp
-    real,intent(in) :: dt,A,t,t2
+    real,intent(in) :: dt
 
     if (I%skip) return
 
@@ -421,11 +423,9 @@ contains
     case('friction')
       select case(I%direction)
       case('x')
-        call update_fields_friction(I%nhat,I%FR,dt,t,t2,Fm%bndFR,Fp%bndFL,&
-          Mm,Mp,A,I%x,I%y,lbound(I%x,1),ubound(I%y,1))
+        call update_fields_friction(I%FR,dt)
       case('y')                                     
-        call update_fields_friction(I%nhat,I%FR,dt,t,t2,Fm%bndFT,Fp%bndFB,&
-          Mm,Mp,A,I%x,I%y,lbound(I%x,1),ubound(I%y,1))
+        call update_fields_friction(I%FR,dt)
       end select
 
     case('eruption')
@@ -464,57 +464,6 @@ contains
   end subroutine update_fields_iface_implicit
 
 
-  subroutine init_boundaries(iblock,B,input,echo)
-
-    use mpi_routines, only : is_master
-    use io, only : error,write_matlab,seek_to_string
-
-    implicit none
-    
-    integer,intent(in) :: iblock,input,echo
-    type(block_boundaries),intent(out) :: B
-
-    integer :: stat
-    character(24) :: bcL,bcR,bcB,bcT
-    character(256) :: str
-    character(256) :: Bstr
-
-    namelist /boundaries_list/ bcL,bcR,bcB,bcT
-
-    ! defaults
-
-    bcL = 'none'
-    bcR = 'none'
-    bcB = 'none'
-    bcT = 'none'
-
-    ! read in boundary condition parameters
-    
-    write(str,'(a,i0,a)') '!---BLOCK',iblock,'---'
-    call seek_to_string(input,str)
-    read(input,nml=boundaries_list,iostat=stat)
-    if (stat>0) call error('Error in boundaries_list','init')
-
-    ! store
-
-    B%bcL = bcL
-    B%bcR = bcR
-    B%bcB = bcB
-    B%bcT = bcT
-
-    ! output boundary condition parameters
-
-    if (is_master) then
-       write(Bstr,'(a,i0,a)') 'B{',iblock,'}'
-       call write_matlab(echo,'bcL',B%bcL,Bstr)
-       call write_matlab(echo,'bcR',B%bcR,Bstr)
-       call write_matlab(echo,'bcB',B%bcB,Bstr)
-       call write_matlab(echo,'bcT',B%bcT,Bstr)
-    end if
-
-  end subroutine init_boundaries
-  
-
   subroutine maxV(I,V)
 
     implicit none
@@ -529,45 +478,97 @@ contains
   end subroutine maxV
 
 
-  subroutine apply_bc(G,F,B,M,mode,t,iblock)
+  subroutine init_boundaries(iblock,B,input,echo)
+
+    use mpi_routines, only : is_master
+    use io, only : error,write_matlab,seek_to_string
+
+    implicit none
+    
+    integer,intent(in) :: iblock,input,echo
+    type(block_boundaries),intent(out) :: B
+
+    integer :: stat
+    character(24) :: bcL,bcR,bcB,bcT
+    real :: rhog
+    character(256) :: str
+    character(256) :: Bstr
+
+    namelist /boundaries_list/ bcL,bcR,bcB,bcT,rhog
+
+    ! defaults
+
+    bcL = 'none'
+    bcR = 'none'
+    bcB = 'none'
+    bcT = 'none'
+    rhog = 0d0
+
+    ! read in boundary condition parameters
+    
+    write(str,'(a,i0,a)') '!---BLOCK',iblock,'---'
+    call seek_to_string(input,str)
+    read(input,nml=boundaries_list,iostat=stat)
+    if (stat>0) call error(trim(str) // ' :: Error in boundaries_list','init')
+
+    ! store
+
+    B%bcL = bcL
+    B%bcR = bcR
+    B%bcB = bcB
+    B%bcT = bcT
+    B%rhog = rhog
+
+    ! output boundary condition parameters
+
+    if (is_master) then
+       write(Bstr,'(a,i0,a)') 'B{',iblock,'}'
+       call write_matlab(echo,'bcL',B%bcL,Bstr)
+       call write_matlab(echo,'bcR',B%bcR,Bstr)
+       call write_matlab(echo,'bcB',B%bcB,Bstr)
+       call write_matlab(echo,'bcT',B%bcT,Bstr)
+       if (B%rhog/=0d0) call write_matlab(echo,'rhog',B%rhog,Bstr)
+    end if
+
+  end subroutine init_boundaries
+
+
+  subroutine apply_bc(G,F,B,mode,t,iblock)
 
     use grid, only : block_grid
     use fields, only : block_fields
-    use material, only : block_material
 
     implicit none
 
     type(block_grid),intent(in) :: G
     type(block_fields),intent(inout) :: F
     type(block_boundaries),intent(in) :: B
-    type(block_material),intent(in) :: M
     integer,intent(in) :: mode,iblock
     real,intent(in) :: t
 
-    if (G%skip) return ! process has no cells in this block
+    if (G%skip) return ! process has no points in this block
 
     ! q-direction
 
     if (G%nx/=1) then
-       if (G%sideL) call apply_bc_side(G%bndL,F%bndFL,G%my,G%py,B%bcL,M,mode,t,iblock)
-       if (G%sideR) call apply_bc_side(G%bndR,F%bndFR,G%my,G%py,B%bcR,M,mode,t,iblock)
+       if (G%sideL) call apply_bc_side(G%bndL,F%bndFL,G%my,G%py,B%bcL,B%rhog,mode,t,iblock)
+       if (G%sideR) call apply_bc_side(G%bndR,F%bndFR,G%my,G%py,B%bcR,B%rhog,mode,t,iblock)
     end if
 
     ! r-direction
 
     if (G%ny/=1) then
-       if (G%sideB) call apply_bc_side(G%bndB,F%bndFB,G%mx,G%px,B%bcB,M,mode,t,iblock)
-       if (G%sideT) call apply_bc_side(G%bndT,F%bndFT,G%mx,G%px,B%bcT,M,mode,t,iblock)
+       if (G%sideB) call apply_bc_side(G%bndB,F%bndFB,G%mx,G%px,B%bcB,B%rhog,mode,t,iblock)
+       if (G%sideT) call apply_bc_side(G%bndT,F%bndFT,G%mx,G%px,B%bcT,B%rhog,mode,t,iblock)
     end if
 
   end subroutine apply_bc
 
 
-  subroutine apply_bc_side(bndC,bndF,m,p,bc,BM,mode,t,iblock)
+  subroutine apply_bc_side(bndC,bndF,m,p,bc,rhog,mode,t,iblock)
     
     use geometry, only : curve
     use fields, only : bnd_fields
-    use material, only : block_material
 
     implicit none
     
@@ -575,8 +576,7 @@ contains
     type(bnd_fields),intent(inout) :: bndF
     integer,intent(in) :: m,p
     character(*),intent(in) :: bc
-    type(block_material),intent(in) :: BM
-    real,intent(in) :: t
+    real,intent(in) :: rhog,t
     integer,intent(in) :: mode,iblock
 
     integer :: i
@@ -585,70 +585,71 @@ contains
 
     if (allocated(bndF%DE)) then
        do i = m,p
-          call set_bc(bndF%F(i,:),bndF%F0(i,:), &
-               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,BM,mode,t,iblock,bndF%DE(i))
+          call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
+               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock,bndF%DE(i))
        end do
     else
        do i = m,p
-          call set_bc(bndF%F(i,:),bndF%F0(i,:), &
-               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,BM,mode,t,iblock)
+          call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
+               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock)
        end do
     end if
     
   end subroutine apply_bc_side
 
 
-  subroutine set_bc(F,F0,x,y,normal,bc,M,mode,t,iblock,DE)
-
-    use material, only : block_material
+  subroutine set_bc(F,F0,U,rhog,x,y,normal,bc,M,mode,t,iblock,DE)
 
     implicit none
 
-    ! F  = current fields
+    ! F  = current fields (grid data when initially passed here,
+    !      then overwritten with hat variables)
     ! F0 = initial fields
 
     real,intent(inout) :: F(:)
-    real,intent(in) :: F0(:),x,y,normal(2),t
+    real,intent(in) :: F0(:),U(:),rhog,x,y,normal(2),M(3),t
     character(*),intent(in) :: bc
-    type(block_material),intent(in) :: M
     integer,intent(in) :: mode,iblock
     real,intent(inout),optional :: DE
 
     if (present(DE)) then
        select case(mode)
        case(2)
-          call set_bc_mode2(F,F0,normal,bc,M,x,y,t,iblock,DE)
+          call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock,DE)
        case(3)
-          call set_bc_mode3(F,F0,normal,bc,M,x,y,t,iblock,DE)
+          call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock,DE)
        end select
     else
        select case(mode)
        case(2)
-          call set_bc_mode2(F,F0,normal,bc,M,x,y,t,iblock)
+          call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock)
        case(3)
-          call set_bc_mode3(F,F0,normal,bc,M,x,y,t,iblock)
+          call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock)
        end select
     end if
 
   end subroutine set_bc
 
 
-  subroutine set_bc_mode3(F,F0,normal,bc,M,x,y,t,iblock,DE)
+  subroutine set_bc_mode3(F,F0,normal,bc,Zs,x,y,t,iblock,DE)
 
-    use material, only : block_material
-    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy,bessel
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use mms, only : bessel
     use io, only : error
 
     implicit none
 
     real,intent(inout) :: F(3)
-    real,intent(in) :: F0(3),normal(2),x,y,t
+    real,intent(in) :: F0(3),normal(2),Zs,x,y,t
     character(*),intent(in) :: bc
-    type(block_material),intent(in) :: M
     integer,intent(in) :: iblock
     real,intent(inout),optional :: DE
 
-    real :: vz,snz,vzFD,snzFD,stzFD,vzEX,snzEX,stzEX,Fe(3)
+    real :: Zsi,vz,snz,vzFD,snzFD,stzFD,vzEX,snzEX,stzEX,Fe(3)
+
+    if (Zs==0d0) return ! fluid, no boundary condition
+       
+    Zsi = 1d0/Zs
 
     ! special cases first
 
@@ -656,9 +657,9 @@ contains
     case('bessel-v')
        call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
        vz = bessel(x,y,t,iblock,'vz')
-       snz = snzFD-M%Zs*(vzFD-vz)
+       snz = snzFD-Zs*(vzFD-vz)
        call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       if (present(DE)) DE = DE+snz*vz-0.25d0*M%Zsi*((snzFD-snz)+M%Zs*(vzFD-vz))**2
+       if (present(DE)) DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
        return
     case('bessel-w')
        call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
@@ -666,10 +667,10 @@ contains
        Fe(2) = bessel(x,y,t,iblock,'sxz')
        Fe(3) = bessel(x,y,t,iblock,'syz')
        call rotate_fields_xy2nt(Fe,normal,vzEX,stzEX,snzEX)
-       vz = 0.5d0*(vzEX+vzFD+M%Zsi*(snzEX-snzFD))
-       snz = 0.5d0*(snzEX+snzFD+M%Zs*(vzEX-vzFD))
+       vz = 0.5d0*(vzEX+vzFD+Zsi*(snzEX-snzFD))
+       snz = 0.5d0*(snzEX+snzFD+Zs*(vzEX-vzFD))
        call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       if (present(DE)) DE = DE+snz*vz-0.25d0*M%Zsi*((snzFD-snz)+M%Zs*(vzFD-vz))**2
+       if (present(DE)) DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
        return
     end select
 
@@ -692,21 +693,21 @@ contains
        call error('Invalid boundary condition (' // &
             trim(bc) // ')','set_bc_mode3')
     case('absorbing','absorbing-0')
-       vz   = 0.5d0*( vzFD-M%Zsi*snzFD)
-       snz  = 0.5d0*(snzFD-M%Zs * vzFD)
+       vz   = 0.5d0*( vzFD-Zsi*snzFD)
+       snz  = 0.5d0*(snzFD-Zs * vzFD)
     case('free','free-0')
-       vz   = vzFD-M%Zsi*snzFD
+       vz   = vzFD-Zsi*snzFD
        snz  = 0d0
     case('rigid','rigid-0')
        vz   = 0d0
-       snz  = snzFD-M%Zs*vzFD
+       snz  = snzFD-Zs*vzFD
     end select
 
     ! energy flux into medium
 
     if (present(DE)) then
        DE = DE+snz*vz ! mechanical energy flux
-       DE = DE-0.25d0*M%Zsi*((snzFD-snz)+M%Zs*(vzFD-vz))**2 ! additional dissipation
+       DE = DE-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2 ! additional dissipation
     end if
 
     ! rotate back to x-y coordinates
@@ -721,40 +722,54 @@ contains
         F = F+F0
     end select
 
-
   end subroutine set_bc_mode3
 
 
-  subroutine set_bc_mode2(F,F0,normal,bc,M,x,y,t,iblock,DE)
+  subroutine set_bc_mode2(F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock,DE)
 
-    use material, only : block_material
-    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy,&
-      mms_sin,inplane_bessel,inplane_fault_mms
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use mms, only : mms_sin,inplane_bessel,inplane_fault_mms
+    use geometry, only : rotate_xy2nt
     use io, only : error
 
     implicit none
 
     real,intent(inout) :: F(6)
-    real,intent(in) :: F0(6),normal(2),x,y,t
+    real,intent(in) :: F0(6),U(2),rhog,normal(2),Zs,Zp,gamma,x,y,t
     character(*),intent(in) :: bc
-    type(block_material),intent(in) :: M
     integer,intent(in) :: iblock
     real,intent(inout),optional :: DE
 
-    real :: vn,vt,snn,snt,stt,szz,vnFD,vtFD,snnFD,sntFD,sttFD,szzFD
-    real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6)
+    real :: Zsi,Zpi,vn,vt,snn,snt,stt,szz,vnFD,vtFD,snnFD,sntFD,sttFD,szzFD
+    real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6),Ut,Un
+
+    ! fluid case
+
+    if (Zs==0d0) then
+       Zsi = 0d0
+    else
+       Zsi = 1d0/Zs
+    end if
+
+    Zpi = 1d0/Zp
+
+    ! special cases first
 
     select case(bc)
-    ! special cases first
-    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w')
+
+    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w') ! MMS
+
+       ! rotate into local normal and tangential coordinates
+
        call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
+
        select case(bc)
        case('inplane-bessel-w')
-         FEX(1) = inplane_bessel(x,y,t,M,'vx')
-         FEX(2) = inplane_bessel(x,y,t,M,'vy')
-         FEX(3) = inplane_bessel(x,y,t,M,'sxx')
-         FEX(4) = inplane_bessel(x,y,t,M,'sxy')
-         FEX(5) = inplane_bessel(x,y,t,M,'syy')
+         FEX(1) = inplane_bessel(x,y,t,'vx')
+         FEX(2) = inplane_bessel(x,y,t,'vy')
+         FEX(3) = inplane_bessel(x,y,t,'sxx')
+         FEX(4) = inplane_bessel(x,y,t,'sxy')
+         FEX(5) = inplane_bessel(x,y,t,'syy')
          FEX(6) = 0d0
        case('inplane-fault-mms-w')
          FEX(1) = inplane_fault_mms(x,y,t,iblock,'vx')
@@ -772,45 +787,51 @@ contains
          FEX(6) = 0d0
        end select
        call rotate_fields_xy2nt(FEX,normal,vtEX,vnEX,sttEX,sntEX,snnEX,szzEX)
-       vt  = 0.5d0*(vtEX+vtFD+M%Zsi*(sntEX-sntFD))
-       snt = 0.5d0*(sntEX+sntFD+M%Zs*(vtEX-vtFD))
-       vn  = 0.5d0*(vnEX+vnFD+M%Zpi*(snnEX-snnFD))
-       snn = 0.5d0*(snnEX+snnFD+M%Zp*(vnEX-vnFD))
-       stt = sttFD-M%gamma*(snnFD-snn)
-       szz = szzFD-M%gamma*(snnFD-snn)
+       vt  = 0.5d0*(vtEX+vtFD+Zsi*(sntEX-sntFD))
+       snt = 0.5d0*(sntEX+sntFD+Zs*(vtEX-vtFD))
+       vn  = 0.5d0*(vnEX+vnFD+Zpi*(snnEX-snnFD))
+       snn = 0.5d0*(snnEX+snnFD+Zp*(vnEX-vnFD))
+       stt = sttFD-gamma*(snnFD-snn)
+       szz = szzFD-gamma*(snnFD-snn)
        call rotate_fields_nt2xy(F,normal,vt,vn,stt,snt,snn,szz)
-    case('rigid-0','absorbing-0','free-0')
+
+    case('rigid-0','absorbing-0','free-0') 
+       ! BC on fields, not field perturbations about initial state
+
        ! rotate into local normal and tangential coordinates
+
        call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
 
        ! apply boundary conditions in local coordinates
 
        select case(bc)
        case('absorbing')
-           vt  = 0.5d0*( vtFD-M%Zsi*sntFD)
-           snt = 0.5d0*(sntFD-M%Zs * vtFD)
-           vn  = 0.5d0*( vnFD-M%Zpi*snnFD)
-           snn = 0.5d0*(snnFD-M%Zp * vnFD)
+           vt  = 0.5d0*( vtFD-Zsi*sntFD)
+           snt = 0.5d0*(sntFD-Zs * vtFD)
+           vn  = 0.5d0*( vnFD-Zpi*snnFD)
+           snn = 0.5d0*(snnFD-Zp * vnFD)
        case('free')
-           vt  = vtFD-M%Zsi*sntFD
+           vt  = vtFD-Zsi*sntFD
            snt = 0d0
-           vn  = vnFD-M%Zpi*snnFD
+           vn  = vnFD-Zpi*snnFD
            snn = 0d0
        case('rigid')
            vt  = 0d0
-           snt = sntFD-M%Zs*vtFD
+           snt = sntFD-Zs*vtFD
            vn  = 0d0
-           snn = snnFD-M%Zp*vnFD
+           snn = snnFD-Zp*vnFD
        end select
-       stt = sttFD-M%gamma*(snnFD-snn)
-       szz = szzFD-M%gamma*(snnFD-snn)
+       stt = sttFD-gamma*(snnFD-snn)
+       szz = szzFD-gamma*(snnFD-snn)
 
        ! rotate back to x-y coordinates
 
        call rotate_fields_nt2xy(F,normal,vt,vn,stt,snt,snn,szz)
 
-    case('rigid','absorbing','free')
-        F = F-F0
+    case('rigid','absorbing','free','absorbing-velocity','free-velocity','tsunami') 
+       ! BC on field perturbations about initial state
+
+       F = F-F0
        ! rotate into local normal and tangential coordinates
        call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
 
@@ -821,23 +842,40 @@ contains
            call error('Invalid boundary condition (' // &
            trim(bc) // ')','set_bc_mode2')
        case('absorbing')
-           vt  = 0.5d0*( vtFD-M%Zsi*sntFD)
-           snt = 0.5d0*(sntFD-M%Zs * vtFD)
-           vn  = 0.5d0*( vnFD-M%Zpi*snnFD)
-           snn = 0.5d0*(snnFD-M%Zp * vnFD)
+           vt  = 0.5d0*( vtFD-Zsi*sntFD)
+           snt = 0.5d0*(sntFD-Zs * vtFD)
+           vn  = 0.5d0*( vnFD-Zpi*snnFD)
+           snn = 0.5d0*(snnFD-Zp * vnFD)
        case('free')
-           vt  = vtFD-M%Zsi*sntFD
+           vt  = vtFD-Zsi*sntFD
            snt = 0d0
-           vn  = vnFD-M%Zpi*snnFD
+           vn  = vnFD-Zpi*snnFD
            snn = 0d0
        case('rigid')
            vt  = 0d0
-           snt = sntFD-M%Zs*vtFD
+           snt = sntFD-Zs*vtFD
            vn  = 0d0
-           snn = snnFD-M%Zp*vnFD
+           snn = snnFD-Zp*vnFD
+       case('absorbing-velocity')
+           vt  = -Zsi*sntFD
+           snt = sntFD
+           vn  = -Zpi*snnFD
+           snn = snnFD
+       case('free-velocity')
+           vt  = vtFD-Zsi*sntFD
+           snt = sntFD
+           vn  = vnFD-Zpi*snnFD
+           snn = snnFD
+        case('tsunami')
+           vt  = vtFD-Zsi*sntFD
+           snt = 0d0
+           ! rotate displacement vector
+           call rotate_xy2nt(U(1),U(2),Ut,Un,normal)
+           snn = -rhog*Un
+           vn  = vnFD-Zpi*(snnFD-snn)
        end select
-       stt = sttFD-M%gamma*(snnFD-snn)
-       szz = szzFD-M%gamma*(snnFD-snn)
+       stt = sttFD-gamma*(snnFD-snn)
+       szz = szzFD-gamma*(snnFD-snn)
 
        ! rotate back to x-y coordinates
 
@@ -854,8 +892,8 @@ contains
     ! energy flux into medium
     if (present(DE)) then
         DE = DE+snt*vt+vn*snn
-        DE = DE-0.25d0*M%Zsi*((sntFD-snt)+M%Zs*(vtFD-vt))**2
-        DE = DE-0.25d0*M%Zpi*((snnFD-snn)+M%Zs*(vnFD-vn))**2
+        DE = DE-0.25d0*Zsi*((sntFD-snt)+Zs*(vtFD-vt))**2
+        DE = DE-0.25d0*Zpi*((snnFD-snn)+Zs*(vnFD-vn))**2
     endif
 
   end subroutine set_bc_mode2

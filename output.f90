@@ -24,7 +24,7 @@ module output
   ! SY = stride in y direction (point/grid output)
   ! X = value of x (point output)
   ! Y = value of y (point output)
-  ! LOCATION = location of field (e.g., body, block, iface)
+  ! LOCATION = location of field (e.g., body, block, iface, bndX)
   ! IFACE = iface index (only used if location=iface)
   ! BLOCK = block index (only used if location=block)
   ! OUTPUT_PROCESS = flag indicating if process holds data to be output
@@ -38,7 +38,7 @@ module output
      logical :: output_process,output_process_t
      integer :: nmin,nmax,st,mx,px,sx,my,py,sy,nx,ny,comm,array,iface,block
      real :: x,y,tmin,tmax
-     type(file_distributed) :: fh,fht,fhtD
+     type(file_distributed) :: fh,fht
   end type output_item
 
   ! OUTPUT_NODE is a derived type for basic node in singly-linked list 
@@ -141,6 +141,12 @@ contains
                call error('Invalid block number','read_output')
           item%location = 'block'
        end if
+       if (item%location(1:3)=='bnd') then
+          read(item%location(5:),'(i6)') item%block
+          if (.not.within(1,item%block,D%nblocks)) &
+               call error('Invalid block number','read_output')
+          item%location = item%location(1:4)
+       end if
        if (item%location(1:6)=='Eblock') then
           read(item%location(7:),'(i6)') item%block
           if (.not.within(1,item%block,D%nblocks)) &
@@ -168,7 +174,7 @@ contains
        case default
           call error('Invalid output location: ' // trim(adjustl(item%location)) , &
                'read_output')
-       case('body','Ebody','block','Eblock','ifacex','ifacey')
+       case('body','Ebody','block','Eblock','ifacex','ifacey','bndL','bndR','bndB','bndT')
           ! nothing to be done
        case('slicex')
           read(input,*) item%my
@@ -748,6 +754,90 @@ contains
 
        end if
 
+    case('bndL')
+
+       item%output_process = D%B(item%block)%G%sideL
+
+       if (item%output_process) then
+
+          item%mx = D%B(item%block)%G%mx
+          item%px = D%B(item%block)%G%mx
+          item%nx = 1
+
+          item%my = D%B(item%block)%G%my
+          item%py = D%B(item%block)%G%py
+          item%ny = D%B(item%block)%G%ny
+
+          call MPI_Comm_dup(D%B(item%block)%F%bndFL%comm,item%comm,ierr)
+          call subarray(item%ny, &
+               item%my-D%B(item%block)%G%mgy+1,item%py-D%B(item%block)%G%mgy+1, &
+               MPI_REAL_PS,item%array)
+
+       end if
+
+    case('bndR')
+
+       item%output_process = D%B(item%block)%G%sideR
+       
+       if (item%output_process) then
+          
+          item%mx = D%B(item%block)%G%px
+          item%px = D%B(item%block)%G%px
+          item%nx = 1
+
+          item%my = D%B(item%block)%G%my
+          item%py = D%B(item%block)%G%py
+          item%ny = D%B(item%block)%G%ny
+
+          call MPI_Comm_dup(D%B(item%block)%F%bndFR%comm,item%comm,ierr)
+          call subarray(item%ny, &
+               item%my-D%B(item%block)%G%mgy+1,item%py-D%B(item%block)%G%mgy+1, &
+               MPI_REAL_PS,item%array)
+
+       end if
+
+    case('bndB')
+
+       item%output_process = D%B(item%block)%G%sideB
+
+       if (item%output_process) then
+
+          item%mx = D%B(item%block)%G%mx
+          item%px = D%B(item%block)%G%px
+          item%nx = D%B(item%block)%G%nx
+
+          item%my = D%B(item%block)%G%my
+          item%py = D%B(item%block)%G%my
+          item%ny = 1
+
+          call MPI_Comm_dup(D%B(item%block)%F%bndFB%comm,item%comm,ierr)
+          call subarray(item%nx, &
+               item%mx-D%B(item%block)%G%mgx+1,item%px-D%B(item%block)%G%mgx+1, &
+               MPI_REAL_PS,item%array)
+
+       end if
+
+    case('bndT')
+
+       item%output_process = D%B(item%block)%G%sideT
+
+       if (item%output_process) then
+
+          item%mx = D%B(item%block)%G%mx
+          item%px = D%B(item%block)%G%px
+          item%nx = D%B(item%block)%G%nx
+
+          item%my = D%B(item%block)%G%py
+          item%py = D%B(item%block)%G%py
+          item%ny = 1
+
+          call MPI_Comm_dup(D%B(item%block)%F%bndFT%comm,item%comm,ierr)
+          call subarray(item%nx, &
+               item%mx-D%B(item%block)%G%mgx+1,item%px-D%B(item%block)%G%mgx+1, &
+               MPI_REAL_PS,item%array)
+
+       end if
+
     end select
 
     ! time output handled by master process in item%comm
@@ -785,7 +875,7 @@ contains
           call write_matlab(echo,'y',item%y,item%name)
        end if
 
-       if (index(item%location,'block')/=0) &
+       if (index(item%location,'block')/=0.or.index(item%location,'bnd')/=0) &
             call write_matlab(echo,'block',item%block,item%name)
        if (index(item%location,'iface')/=0) &
             call write_matlab(echo,'iface',item%iface,item%name)
@@ -864,8 +954,6 @@ contains
        name = trim(adjustl(pb_name)) // '_' // trim(adjustl(item%name)) // '.t'
        offset = noffset*ps
        call open_file_distributed(item%fht ,name,operation,MPI_COMM_SELF,MPI_REAL_PS,ps,offset)
-       name = trim(adjustl(pb_name)) // '_' // trim(adjustl(item%name)) // '.tD'
-       call open_file_distributed(item%fhtD,name,operation,MPI_COMM_SELF,MPI_REAL_PS,ps,offset)
     end if
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
@@ -923,10 +1011,8 @@ contains
           
           ! write output time
           
-          if (node%item%output_process_t) then
-             call write_file_distributed(node%item%fht ,(/D%t /))
-             call write_file_distributed(node%item%fhtD,(/D%tD/))
-          end if
+          if (node%item%output_process_t) &
+               call write_file_distributed(node%item%fht ,(/D%t /))
 
           ! write data
           
@@ -1007,10 +1093,8 @@ contains
           
           ! close time file
           
-          if (node%item%output_process_t) then
-             call close_file_distributed(node%item%fht )
-             call close_file_distributed(node%item%fhtD)
-          end if
+          if (node%item%output_process_t) &
+               call close_file_distributed(node%item%fht )
 
           ! close data file
           

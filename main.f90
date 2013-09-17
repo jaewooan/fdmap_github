@@ -3,11 +3,11 @@ program main
   use checkpoint, only : checkpoint_type,init_checkpoint,checkpoint_read, &
        checkpoint_write_delete,checkpoint_delete,finish_checkpoint,abort_now
   use domain, only : domain_type,init_domain,finish_domain,check_nucleation
-  use time_step, only : RK_type,init_RK,time_step_LS,time_step_interseismic
+  use time_step, only : RK_type,init_RK,time_step_LS
   use io, only : new_io_unit,error,message,write_matlab,get_endian,copy_text_file
   use output, only : output_list,read_output,init_output,destroy_output
   use utilities, only : convert_time,within
-  use mpi_routines, only : start_mpi,nprocs,is_master,finish_mpi,clock_split
+  use mpi_routines, only : start_mpi,nprocs,is_master,finish_mpi,time_elapsed
   use mpi
 
   implicit none
@@ -16,18 +16,18 @@ program main
   character(256) :: str,input_file
   character(1) :: endian
   integer :: n,nt,ninfo,nstart,input,echo,stat,RKorder,hr,mn
-  real :: CFL,t,dt,refine,time_per_step, &
-       start_time,end_time,total_time,initial_time,sc, &
-       tnuc_min,tnuc_max,minV,cyc_dt,cyc_z,cyc_H,cyc_plate_rate, tend
-  logical :: cyc,abort,slipping,constant_dt,final_step,interseismic_step,solid
+  real :: CFL,t,dt,refine,tend,sc, &
+       tnuc_min,tnuc_max,minV, &
+       walltime_start,walltime_total,walltime_per_step_ave, &
+       walltime1,walltime2,walltime_per_step
+  logical :: abort,slipping,constant_dt,final_step,solid
   type(RK_type) :: RK
   type(domain_type) :: D
   type(output_list) :: outlist
   type(checkpoint_type) :: C
 
   namelist /problem_list/ name,t,nt,CFL,dt,refine,ninfo,Rkmethod,RKorder, &
-       tnuc_min,tnuc_max,minV,constant_dt,cyc,cyc_dt,cyc_z,cyc_H,cyc_plate_rate,solid,&
-       tend
+       tnuc_min,tnuc_max,minV,constant_dt,solid,tend
 
   ! get problem name
 
@@ -37,8 +37,6 @@ program main
   ! start MPI
 
   call start_mpi
-  call clock_split(current_time=start_time)
-  initial_time = start_time
 
   ! print number of processors
   
@@ -75,18 +73,10 @@ program main
   tnuc_max = huge(tnuc_max)
   minV = 0d0
 
-  cyc = .false.
-  cyc_dt = 0d0
-  cyc_z = 0d0
-  cyc_H = 0d0
-  cyc_plate_rate = 0d0
-
   ! read in problem parameters
 
   read(input,nml=problem_list,iostat=stat)
   if (stat>0) call error('Error in problem_list','main')
-
-  if (cyc) constant_dt = .false.
 
   if (is_master) &
      call message('Starting problem: ' // trim(adjustl(name)))
@@ -160,28 +150,26 @@ program main
   ! read checkpoint
 
   D%t = t+dble(C%begin)*dt
-  D%tD = D%t
-  if (cyc.and.C%begin/=0) &
-       call message('Must set initial D%t and D%tD properly when starting cycles from checkpoint')
   D%n = C%begin
   call checkpoint_read(name,C,D)
 
   ! initialization complete
 
-  call clock_split(current_time=end_time)
-  total_time = end_time-start_time
-  start_time = end_time
   if (is_master) then
-     write(str,'(a,f0.6,a)') 'Initialization complete (',total_time,' s)'
+     write(str,'(a,f0.6,a)') 'Initialization complete (',time_elapsed(),' s)'
      call message(str)
   end if
 
   ! loop over all time steps
 
   abort = .false.
-  interseismic_step = .false.
+  walltime_start = time_elapsed() ! start timing for average time/step
 
   do n = nstart,nt
+
+     ! time each step
+
+     walltime1 = time_elapsed()
 
      ! manually set time (to minimize round-off errors from successively adding dt)
      
@@ -191,31 +179,18 @@ program main
      
      ! advance by one time step
 
-     if (interseismic_step) then
-        
-        ! increase shear stress and evolve state for cycle simulations
-        
-        call time_step_interseismic(D,cyc_z,cyc_H,cyc_plate_rate,cyc_dt,outlist)
-
-     else
-
-        ! elastodynamic time step
-
-        select case(RK%method)
-        case('LS')
-           call time_step_LS(D,dt,CFL,RK,outlist,final_step,solid)
-           D%tD = D%tD+dt ! only updated during dynamic steps
-        case default
-           call error('Invalid RK method','main')
-        end select
-        
-     end if
-
+     select case(RK%method)
+     case('LS')
+        call time_step_LS(D,dt,RK,outlist,final_step,solid)
+     case default
+        call error('Invalid RK method','main')
+     end select
+     
      D%n = n
 
      ! determine if abort (immediate checkpoint and termination) is requested
 
-     abort = abort_now(name,C,initial_time)
+     abort = abort_now(name,C)
      if (abort.and.is_master) call message('Aborting now...')
 
      ! write new checkpoint and delete previous checkpoint after successful write
@@ -225,71 +200,56 @@ program main
      ! status update
      
      if (mod(n-1,ninfo)==0) then
-        call clock_split(time_per_step,end_time)
-        time_per_step = time_per_step/dble(min(ninfo,n-nstart+1))
+        walltime2 = time_elapsed()
+        walltime_per_step = walltime2-walltime1
         if (is_master) then
-           if (cyc) then
-              if (interseismic_step) then
-                 write(str,'(a,i0,a,i0,a,f0.6,a,f0.6,a,f0.6,a,f0.6,a)') &
-                      'time step (QS ) ',n,' of ',nt,': t = ',D%t,', tD = ',D%tD, &
-                      ' (wall clock: ',end_time-start_time,' s, ',time_per_step,' s/step)'
-              else
-                 write(str,'(a,i0,a,i0,a,f0.6,a,f0.6,a,f0.6,a,f0.6,a)') &
-                      'time step (DYN) ',n,' of ',nt,': t = ',D%t,', tD = ',D%tD, &
-                      ' (wall clock: ',end_time-start_time,' s, ',time_per_step,' s/step)'
-              end if
-           else
-              write(str,'(a,i0,a,i0,a,f0.6,a,f0.6,a,f0.6,a)') &
-                   'time step ',n,' of ',nt,': t = ',D%t,' (wall clock: ', &
-                   end_time-start_time,' s, ',time_per_step,' s/step)'
-           end if
+           write(str,'(a,i0,a,i0,a,f0.6,a,f0.6,a,f0.6,a)') &
+                'time step ',n,' of ',nt,': t = ',D%t,' (wall clock: ', &
+                walltime2,' s, ',walltime_per_step,' s/step)'
            call message(str)
         end if
      end if
   
      ! check if current slip velocity is too small
 
-     if (cyc) then
-        call check_nucleation(D,minV,slipping)
-        interseismic_step = .not.slipping
-     else
-        slipping = .true.
-        if (within(tnuc_min,D%t,tnuc_max)) call check_nucleation(D,minV,slipping)
-        if (.not.slipping) then
-           if (is_master) call message( &
-                'Fault slip velocity too small (nucleation failed) -- terminating run...')
-           exit
-        end if
+     slipping = .true.
+     if (within(tnuc_min,D%t,tnuc_max)) call check_nucleation(D,minV,slipping)
+     if (.not.slipping) then
+        if (is_master) call message( &
+             'Fault slip velocity too small (nucleation failed) -- terminating run...')
+        exit
      end if
      
      ! exit loop if aborting
 
      if (abort) exit
-   
+
+     ! calculate average wall clock time per time step
+
+     if (n==nt-1) walltime_per_step_ave = (time_elapsed()-walltime_start)/dble(nt-nstart)
+
   end do
-
-  ! collect timing information
-
-  call clock_split(current_time=end_time)
-  total_time = end_time-start_time
 
   ! delete final checkpoint (unless aborting)
 
   if (.not.abort.and.C%del_final) call checkpoint_delete(name,C,D,final=.true.)
 
+  ! collect timing information
+
+  walltime_total = time_elapsed()
+
   ! display timing information
 
   if (is_master) then
-     call convert_time(total_time,hr,mn,sc)
+     call convert_time(walltime_total,hr,mn,sc)
      write(str,'(a,f0.8,a,i0,a,f0.4,a)') &
-          'total: ',total_time,' s for ',n,' time steps (', &
-          total_time/dble(n-nstart+1),' s/step)'
+          'total: ',walltime_total,' s for ',nt,' time steps (',walltime_per_step_ave,' s/step)'
      call message(str)
      write(str,'(a,i0,a,i0,a,f0.8,a)') &
           '= ',hr,' hr ',mn,' min ',sc, ' s'
      call message(str)
-     write(str,'(i0,a,f0.8,a,f0.4)') &
-          nprocs,'  ',total_time,'  ',total_time/dble(n-nstart+1)
+     write(str,'(a,i0,a,f0.8)') &
+          'timing: ',nprocs,'  ',walltime_per_step_ave
      call message(str)
      if (n-1==nt) then
         call message('Finished problem: ' // trim(adjustl(name)))

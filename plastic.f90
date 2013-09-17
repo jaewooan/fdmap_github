@@ -5,11 +5,11 @@ module plastic
 contains
 
 
-  subroutine set_rates_plastic(B,G,F,BF,M,mode,dt)
+  subroutine update_fields_plastic(B,G,F,BF,M,E,mode,dt)
 
     use grid, only : grid_type,block_grid
     use fields, only : fields_type,block_fields,initial_stress
-    use material, only : block_material
+    use material, only : block_material,elastic_type
 
     implicit none
 
@@ -18,30 +18,46 @@ contains
     type(fields_type),intent(inout) :: F
     type(block_fields),intent(in) :: BF
     type(block_material),intent(in) :: M
+    type(elastic_type),intent(in) :: E
     integer,intent(in) :: mode
     real,intent(in) :: dt
 
     integer :: i,j
-    real :: s0(6)
+    real :: Gel,Kel,s0(6)
 
-    if (M%response=='plastic') then
+    logical :: heterogeneous
 
-       do j = B%my,B%py
-          do i = B%mx,B%px
+    if (M%response/='plastic') return
 
-             call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode)
-             call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%Dgammap(i,j),F%lambda(i,j), &
-                  M,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt)
+    heterogeneous = allocated(E%rho)
+    
+    do j = B%my,B%py
+       do i = B%mx,B%px
+          
+          if (heterogeneous) then
+             Gel = E%G(i,j)
+             Kel = E%M(i,j)-1.333333333333333d0*E%G(i,j)
+          else
+             Gel = M%G
+             Kel = M%K
+          end if
 
-          end do
+          call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode)
+          if(allocated(F%EP)) then
+            call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
+              M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt,F%EP(i,j,:))
+          else
+            call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
+              M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt)
+          end if
+          
        end do
+    end do
 
-    end if
-
-  end subroutine set_rates_plastic
+  end subroutine update_fields_plastic
 
 
-  subroutine plastic_flow(Ds,Dgammap,lambda,M,mode,s,gammap,s0,dt)
+  subroutine plastic_flow(Ds,lambda,M,G,K,mode,s,gammap,s0,dt,ep)
 
     use material, only : block_material
     use io, only : error
@@ -54,10 +70,11 @@ contains
     ! S = stress change (added to S0 to get absolute stress)
     ! GAMMAP = plastic strain
 
-    real,intent(inout) :: Ds(:),Dgammap,lambda,s(:),gammap
+    real,intent(inout) :: Ds(:),lambda,s(:),gammap
+    real,intent(inout),optional :: ep(:)
     type(block_material),intent(in) :: M
     integer,intent(in) :: mode
-    real,intent(in) :: s0(6),dt
+    real,intent(in) :: G,K,s0(6),dt
 
     ! SA = absolute stress tensor
     ! SD = deviatoric stress tensor
@@ -93,12 +110,12 @@ contains
     ! special case for correction onto tau = 0 yield surface
     ! (selection of special case may not be correct with hardening)
 
-    if (tau*M%mu*M%beta*M%K>(M%mu*sigma-M%b)*M%G) then ! usual case
+    if (tau*M%mu*M%beta*K>(M%mu*sigma-M%b)*G) then ! usual case
        !print *, 'regular',Y,tau,sigma
-       lambda = (tau+M%mu*sigma-(M%b+M%h*gammap))/(M%eta+dt*(M%h+M%G+M%mu*M%beta*M%K))
+       lambda = (tau+M%mu*sigma-(M%b+M%h*gammap))/(M%eta+dt*(M%h+G+M%mu*M%beta*K))
     else ! special case, occurs for TPV13
        !print *, 'special',Y,tau,sigma
-       lambda = tau/(M%eta+dt*M%G)
+       lambda = tau/(M%eta+dt*G)
     end if
     
     ! update gammap
@@ -107,8 +124,8 @@ contains
 
     ! update tau and sigma
 
-    tau = tau-dt*lambda*M%G
-    sigma = sigma-dt*lambda*M%beta*M%K
+    tau = tau-dt*lambda*G
+    sigma = sigma-dt*lambda*M%beta*K
 
     ! check yield using new tau,sigma (UNNECESSARY, DEBUGGING ONLY)
     !call yield(tau,sigma,gammap,Y,M)
@@ -116,15 +133,15 @@ contains
     
     ! calculate flow direction, using old sd and new tau
 
-    W = M%K*M%beta*delta+M%G*sd/(tau+dt*lambda*M%G)
+    W = K*M%beta*delta+G*sd/(tau+dt*lambda*G)
 
     ! update deviatoric stress
 
-    sd = sd*tau/(tau+dt*lambda*M%G)
+    sd = sd*tau/(tau+dt*lambda*G)
 
     ! calculate flow direction, using new sd and new tau
 
-    !W = M%K*M%beta*delta+M%G*sd/tau
+    !W = K*M%beta*delta+G*sd/tau
 
     ! determine stress components (both methods give identical results)
 
@@ -151,7 +168,7 @@ contains
         
     ! adjust rates
 
-    Dgammap = Dgammap+lambda
+    gammap = gammap+dt*lambda
 
     select case(mode)
     case(2)
@@ -159,6 +176,12 @@ contains
     case(3)
        Ds = Ds-lambda* (/ W(3),W(5) /)
     end select
+    
+    if(present(ep)) then
+      ! update plastic strain rates using new deviatoric stress, lambda, and tau
+      ep = ep+dt*lambda*(sd/(2*tau)+(M%beta/3)*delta)
+    end if
+
        
   end subroutine plastic_flow
 

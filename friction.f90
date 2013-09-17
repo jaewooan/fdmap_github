@@ -22,16 +22,14 @@ module friction
      real :: c0,fd,dfdx,vL,vR,xL,xR,tmax
   end type kinematic
 
+  type :: pseudodynamic
+     real,dimension(:),allocatable :: Dmax,trup,Vpeak
+  end type pseudodynamic
+
   type :: load
      character(256) :: shape
      real :: S,N,T,R,x0,y0
   end type load
-
-  type :: time_load
-     character(256) :: shape
-     logical :: time_force
-     real :: R,T,ITmin,x0,y0,fmin
-  end type time_load
 
   type :: fr_type
      logical :: opening,force
@@ -41,10 +39,9 @@ module friction
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
+     type(pseudodynamic) :: pd
      type(load) :: ld
-     type(time_load) :: tld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,DV,DSt,Neff,bN0,bS0
-     ! real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,DV,phis,bN0,bS0
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn
   end type fr_type
 
 
@@ -52,7 +49,7 @@ contains
 
   
   subroutine init_friction(iface,FR,m,p,input,echo,skip, &
-       process_m,process_p,comm_m,comm_p,array,bndr_rates)
+       process_m,process_p,comm_m,comm_p,array)
 
     use mpi_routines, only : is_master
     use io, only : error,write_matlab,seek_to_string  
@@ -62,24 +59,22 @@ contains
     integer,intent(in) :: iface,m,p,input,echo,comm_m,comm_p,array
     type(fr_type),intent(out) :: FR
     logical,intent(in) :: skip,process_m,process_p
-    logical,intent(out) :: bndr_rates
 
     integer :: stat
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file,stress_file
-    character(256) :: friction_law,problem,rup_field,filename,stressfilename
+    logical :: opening,force,friction_file
+    character(256) :: friction_law,problem,rup_field,filename
     real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
     subduction_f0,subduction_N0,subduction_B
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
     type(load) :: ld
-    type(time_load) :: tld
 
-    namelist /friction_list/ opening,force,friction_law,problem,friction_file,stress_file,filename,stressfilename, &
-         S0,Psi0,angle,rs,sw,kn,ld,tld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
+    namelist /friction_list/ opening,force,friction_law,problem,friction_file,filename, &
+         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
          subduction_f0,subduction_N0,subduction_B
 
     ! defaults
@@ -89,9 +84,7 @@ contains
     friction_law = 'frictionless'
     problem = ''
     friction_file = .false.
-    stress_file = .false.
     filename = ''
-    stressfilename = ''
     Psi0 = 0d0
     S0 = 0d0
     angle = 0d0
@@ -99,7 +92,6 @@ contains
     sw = slipweak_constant(0d0,1d0,0d0,1d0)
     kn = kinematic(0d0,0d0,1d0,0d0,0d0,0d0,0d0,huge(1d0))
     ld = load('smooth',0d0,0d0,0d0,1d0,0d0,0d0)
-    tld = time_load('smooth',.false.,0d0,0d0,1d40,0d0,0d0,0d0)
     rup_field = 'V'
     rup_threshold = 0d0
     uni_x0 = 0d0
@@ -127,7 +119,6 @@ contains
     FR%angle = 0.017453292519943d0*angle ! convert deg to rad
     FR%kn = kn
     FR%ld = ld
-    FR%tld = tld
     FR%rup_field = rup_field
     FR%rup_threshold = rup_threshold
     FR%uni_x0 = uni_x0
@@ -138,9 +129,6 @@ contains
     FR%subduction_f0 = subduction_f0
     FR%subduction_N0 = subduction_N0
     FR%subduction_B = subduction_B
-
-    ! if friction law is RFSL then we need boundary rates otherwise we do not
-    bndr_rates = (friction_law .eq. 'RFSL')
 
     ! output friction parameters
     
@@ -164,7 +152,7 @@ contains
 
        select case(FR%friction_law)
 
-       case('SL','FL','RSL','RFL','RSF','RSL-mms','RFSL','RSL-mms-nostate')
+       case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
 
           call write_matlab(echo,'Psi0',FR%Psi0,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
@@ -216,11 +204,8 @@ contains
     ! allocate and initialize arrays
 
     allocate(FR%V   (m:p),FR%O   (m:p))
-    allocate(FR%DV  (m:p),FR%Neff(m:p))
-    allocate(FR%DSt  (m:p))
     allocate(FR%S   (m:p),FR%N   (m:p))
     allocate(FR%S0  (m:p),FR%N0  (m:p))
-    allocate(FR%bS0  (m:p),FR%bN0  (m:p))
     allocate(FR%Ds  (m:p),FR%DDs (m:p))
     allocate(FR%Dn  (m:p),FR%DDn (m:p))
 
@@ -229,17 +214,11 @@ contains
     FR%DDs = 0d0
     FR%DDn = 0d0
     FR%V    = 1d40
-    FR%DV   = 1d40
-    FR%DSt   = 1d40
-    FR%Neff = 1d40
     FR%O    = 1d40
     FR%S    = 1d40
     FR%N    = 1d40
     FR%S0   = 1d40
     FR%N0   = 1d40
-    FR%bS0  = 0d0
-    FR%bN0  = 0d0
-       
     
     allocate(FR%Psi(m:p),FR%DPsi(m:p),FR%D(m:p),FR%trup(m:p))
 
@@ -249,7 +228,7 @@ contains
     FR%trup = 1d10
 
     select case(FR%friction_law)
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RFSL','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
        allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
        FR%rs%a  = rs%a
        FR%rs%b  = rs%b
@@ -264,18 +243,17 @@ contains
        FR%sw%fs = sw%fs
        FR%sw%fd = sw%fd
        FR%sw%Dc = sw%Dc
+    case('pseudodynamic')
+       allocate(FR%pd%Dmax(m:p),FR%pd%trup(m:p),FR%pd%Vpeak(m:p))
+       FR%pd%Dmax = 0d0
+       FR%pd%trup = 1d40
+       FR%pd%Vpeak = 0d0
     end select
 
     if (friction_file) then
        ! both sides read file (so process may read file twice)
        if (process_m) call read_friction(FR,filename,comm_m,array)
        if (process_p) call read_friction(FR,filename,comm_p,array)
-    end if
-
-    if (stress_file) then
-       ! both sides read file (so process may read file twice)
-       if (process_m) call read_stress(FR,stressfilename,comm_m,array)
-       if (process_p) call read_stress(FR,stressfilename,comm_p,array)
     end if
 
   end subroutine init_friction
@@ -292,21 +270,15 @@ contains
     if (allocated(FR%D   )) deallocate(FR%D   )
     if (allocated(FR%trup)) deallocate(FR%trup)
     if (allocated(FR%V   )) deallocate(FR%V   )
-    if (allocated(FR%DV  )) deallocate(FR%DV  )
-    if (allocated(FR%DSt  )) deallocate(FR%DSt)
-    if (allocated(FR%Neff)) deallocate(FR%Neff)
     if (allocated(FR%O   )) deallocate(FR%O   )
     if (allocated(FR%S   )) deallocate(FR%S   )
     if (allocated(FR%N   )) deallocate(FR%N   )
     if (allocated(FR%S0  )) deallocate(FR%S0  )
     if (allocated(FR%N0  )) deallocate(FR%N0  )
-    if (allocated(FR%bS0 )) deallocate(FR%bS0 )
-    if (allocated(FR%bN0 )) deallocate(FR%bN0 )
     if (allocated(FR%Ds  )) deallocate(FR%Ds  )
     if (allocated(FR%Dn  )) deallocate(FR%Dn  )
     if (allocated(FR%DDs )) deallocate(FR%DDs )
     if (allocated(FR%DDn )) deallocate(FR%DDn )
-
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -320,6 +292,10 @@ contains
     if (allocated(FR%sw%fs)) deallocate(FR%sw%fs)
     if (allocated(FR%sw%fd)) deallocate(FR%sw%fd)
     if (allocated(FR%sw%Dc)) deallocate(FR%sw%Dc)
+
+    if (allocated(FR%pd%Dmax)) deallocate(FR%pd%Dmax)
+    if (allocated(FR%pd%trup)) deallocate(FR%pd%trup)
+    if (allocated(FR%pd%Vpeak)) deallocate(FR%pd%Vpeak)
 
   end subroutine destroy_friction
 
@@ -342,7 +318,7 @@ contains
 
     select case(FR%friction_law)
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RFSL','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
        
        call read_file_distributed(fh,FR%rs%a )
        call read_file_distributed(fh,FR%rs%b )
@@ -359,34 +335,17 @@ contains
        call read_file_distributed(fh,FR%sw%fd)
        call read_file_distributed(fh,FR%sw%Dc)
 
+    case('pseudodynamic')
+
+       call read_file_distributed(fh,FR%pd%Dmax)
+       call read_file_distributed(fh,FR%pd%trup)
+       call read_file_distributed(fh,FR%pd%Vpeak)
+
     end select
 
     call close_file_distributed(fh)
 
   end subroutine read_friction
-
-  subroutine read_stress(FR,filename,comm,array)
-
-    use io, only : file_distributed,open_file_distributed, &
-         read_file_distributed,close_file_distributed
-    use mpi_routines, only : pw
-
-    implicit none
-
-    type(fr_type),intent(inout) :: FR
-    character(*),intent(in) :: filename
-    integer,intent(in) :: comm,array
-
-    type(file_distributed) :: fh
-
-    call open_file_distributed(fh,filename,'read',comm,array,pw)
-
-    call read_file_distributed(fh,FR%bS0 )
-    call read_file_distributed(fh,FR%bN0 )
-
-    call close_file_distributed(fh)
-
-  end subroutine read_stress
 
 
   subroutine checkpoint_friction(fh,operation,FR)
@@ -410,16 +369,11 @@ contains
        call read_file_distributed(fh,FR%DPsi)
        call read_file_distributed(fh,FR%trup)
        call read_file_distributed(fh,FR%V)
-       call read_file_distributed(fh,FR%DV)
-       call read_file_distributed(fh,FR%DSt)
-       call read_file_distributed(fh,FR%Neff)
        call read_file_distributed(fh,FR%O)
        call read_file_distributed(fh,FR%S)
        call read_file_distributed(fh,FR%N)
        call read_file_distributed(fh,FR%S0)
        call read_file_distributed(fh,FR%N0)
-       call read_file_distributed(fh,FR%bS0)
-       call read_file_distributed(fh,FR%bN0)
        call read_file_distributed(fh,FR%Ds)
        call read_file_distributed(fh,FR%Dn)
        call read_file_distributed(fh,FR%DDs)
@@ -430,16 +384,11 @@ contains
        call write_file_distributed(fh,FR%DPsi)
        call write_file_distributed(fh,FR%trup)
        call write_file_distributed(fh,FR%V)
-       call write_file_distributed(fh,FR%DV)
-       call write_file_distributed(fh,FR%DSt)
-       call write_file_distributed(fh,FR%Neff)
        call write_file_distributed(fh,FR%O)
        call write_file_distributed(fh,FR%S)
        call write_file_distributed(fh,FR%N)
        call write_file_distributed(fh,FR%S0)
        call write_file_distributed(fh,FR%N0)
-       call write_file_distributed(fh,FR%bS0)
-       call write_file_distributed(fh,FR%bN0)
        call write_file_distributed(fh,FR%Ds)
        call write_file_distributed(fh,FR%Dn)
        call write_file_distributed(fh,FR%DDs)
@@ -463,145 +412,25 @@ contains
   end subroutine scale_rates_friction
   
 
-  subroutine update_fields_friction(normal,FR,dt,t,t2,Fm,Fp,Mm,Mp,A,x,y,m,p)
-    use fields, only : bnd_fields, rotate_fields_xy2nt,rotate_fields_nt2xy
-    use material, only : block_material
-    use io, only : error,warning
+  subroutine update_fields_friction(FR,dt)
 
     implicit none
 
     type(fr_type),intent(inout) :: FR
-    type(bnd_fields),intent(in) :: Fm,Fp
-    type(block_material),intent(in) :: Mm,Mp
-    real,intent(in) :: dt,A,t,t2
-    integer,intent(in) :: m,p
-    real,dimension(m:,1:),intent(in) :: normal
-    real,dimension(m:),intent(in) :: x,y
-    character(256) :: str
-    integer :: j
-    real :: Slock,Nlock,phip,etas,etap,phis, &
-      vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-      vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real :: Dphis,&
-      Dvnp,Dvtp,Dsnnp,Dsntp,Dsttp,Dszzp,DvnFDp,DvtFDp,DsnnFDp,DsntFDp,DsttFDp,DszzFDp, &
-      Dvnm,Dvtm,Dsnnm,Dsntm,Dsttm,Dszzm,DvnFDm,DvtFDm,DsnnFDm,DsntFDm,DsttFDm,DszzFDm
-    real :: DS0, DN0,ITF
-    real :: fss
+    real,intent(in) :: dt
 
-    FR%Ds = FR%Ds+dt*FR%DDs
-    FR%Dn = FR%Dn+dt*FR%DDn
-    FR%D = FR%D+dt*abs(FR%DDs)
+    FR%Ds  = FR%Ds +dt*FR%DDs
+    FR%Dn  = FR%Dn +dt*FR%DDn
+    FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
 
-    if(FR%friction_law .eq. 'RFSL') then
-      do j = m,p
-        associate(DV=>FR%DV(j),V=>FR%V(j),S=>FR%S(j),N=>FR%N(j),O=>FR%O(j),Neff=>FR%Neff(j),&
-            rsa=>FR%rs%a(j),rsb=>FR%rs%b(j),rsL=>FR%rs%L(j),rsf0=>FR%rs%f0(j),rsV0=>FR%rs%V0(j),&
-            S0=>FR%S0(j),N0=>FR%N0(j),DSt=>FR%DSt(j),bN0=>FR%bN0(j),bS0=>FR%bS0(j),fmin=>FR%tld%fmin)
-
-
-          ! we need to solve:
-          !
-          !     (1) dS/dt = (a N / V) tanh(S / (a N)) dV/dt - (V / L) ( |S| - N fss(|V|))
-          !     (2) S = phi + S0 - etas V
-          !
-          ! We will update the fields as follows:
-          ! Taking the time derivative of (2) gives
-          !
-          !     (3) dS/dt = dphi/dt + dS0/dt - etas dV/dt
-          !
-          ! plugging (3) into (1) gives
-          !
-          !    (4) dphi/dt + dS0/dt - etas dV/dt = (a N / V) tanh(S / (a N)) dV/dt - (V / L) ( |S| - N fss(|V|))
-          !
-          ! which upon rearranging is
-          !
-          !    (5) ((a N / V) tanh(S / (a N)) + etas) dV/dt = dphi/dt + dS0/dt + (V / L) ( |S| - N fss(|V|))
-          !
-          ! or 
-          !
-          !    (6) dV/dt = (dphi/dt + dS0/dt + (V / L) ( |S| - N fss(|V|))) / ((a N / V) tanh(S / (a N)) + etas)
-          
-
-          ! First we calculate dphi/dt. Since we store the rates and not the
-          ! derivative we must subtract:
-          !
-          !    DF - DF2 = current rate - previous rate = derivative
-          !
-          ! Then we rotate from the physical to edge aligned coordinates
-          call rotate_fields_xy2nt(Fp%DF(j,:)-Fp%DF2(j,:),normal(j,:),DvtFDp,DvnFDp,DsttFDp,DsntFDp,DsnnFDp,DszzFDp)
-          call rotate_fields_xy2nt(Fm%DF(j,:)-Fm%DF2(j,:),normal(j,:),DvtFDm,DvnFDm,DsttFDm,DsntFDm,DsnnFDm,DszzFDm)
-
-          etas = 1d0/(Mp%Zsi+Mm%Zsi)
-          Dphis = etas*(DsntFDp*Mp%Zsi+DsntFDm*Mm%Zsi+DvtFDp-DvtFDm)
-
-
-          ! Calculate the load stress derivative
-          call load_stress_derivative(FR,x(j),y(j),t,DS0,DN0,normal,Mm,Mp)
-
-
-          ! Now calculate DV (which is the rate)
-          !
-          ! If N > 0 then we use the formula given, otherwise we work out the
-          ! special case of N = 0 (where N = N effective)
-          DV = A*DV
-          ! Calculate the load stress: N0, S0 at the old time
-          call load_stress(FR,x(j),y(j),t,S0,N0,normal,Mm,Mp,bS0,bN0)
-          ! Neff = N0 + (N-N0)*(1d0-FR%subduction_B)
-          ! Neff = FR%subduction_B*N0 + (1d0-FR%subduction_B)*N !v3
-          ! Neff = N + FR%subduction_B*(N0-N) !v2
-          if(Neff > 0d0) then
-            fss = rsf0-(rsb-rsa)*log(abs(V)/rsV0)
-            DV = DV + (Dphis + DS0 + (V / rsL)*(abs(S) - Neff*fss)) / ((rsa * Neff / V) * tanh(S / (rsa*Neff)) + etas)
-          else
-            DV = DV + (Dphis + DS0 + (V / rsL)*abs(S)) / etas
-          endif
-          V = V + dt*DV
-
-          
-
-          ! update phis
-          call rotate_fields_xy2nt(Fp%F(j,:),normal(j,:),vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
-          call rotate_fields_xy2nt(Fm%F(j,:),normal(j,:),vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
-          phis = etas*(sntFDp*Mp%Zsi+sntFDm*Mm%Zsi+vtFDp-vtFDm)
-
-
-          ! Calculate the load stress: N0, S0
-          call load_stress(FR,x(j),y(j),t2,S0,N0,normal,Mm,Mp,bS0,bN0)
-
-
-          ! Now we can update S using update V and phis
-          S = phis + S0 - etas*V
-          ! V = phis/etas
-
-
-
-          ! Now we update the normal stress since it should still be at the old time
-          etap = 1d0/(Mp%Zpi+Mm%Zpi)
-          phip = etap*(snnFDp*Mp%Zpi+snnFDm*Mm%Zpi+vnFDp-vnFDm)
-          O = 0d0
-          N = N0-phip
-          Neff = N0 - (1d0-FR%subduction_B)*phip
-
-
-          if (V*S<0d0) then
-            write(str,'(a,e10.4,a,e10.4,a,f0.4,a,f0.4,a,f0.4,a,f0.4)') 'Incompatible signs: V = ',V,' S = ',S,' N = ',N,' at x = ',x(j),', y = ',y(j),', t = ',t
-            ! call warning(str,'update_fields_friction') ! Totally unsafe, but let's try...
-          end if
-          if (isNAN(V) .or. isNAN(S) .or. isNAN(N)) then
-            write(str,'(a,e10.4,a,e10.4,a,f0.4,a,f0.4,a,f0.4,a,f0.4)') 'NAN: V = ',V,' S = ',S,' N = ',N,' at x = ',x(j),', y = ',y(j),', t = ',t
-            call error(str,'update_fields_friction')
-          end if
-        end associate
-      end do
-    end if
-
   end subroutine update_fields_friction
+
 
   subroutine initial_state(FR,Psi,V,S,N,i,x,y,dt)
 
     use io, only : error
-    use fields, only: inplane_fault_mms
+    use mms, only: inplane_fault_mms
 
     implicit none
 
@@ -616,7 +445,7 @@ contains
     real :: theta0
 
     select case(FR%friction_law)
-    case('frictionless')
+    case('frictionless','pseudodynamic','SW')
        Psi = 0d0
        return
     end select
@@ -665,7 +494,6 @@ contains
           Nex = inplane_fault_mms(x,y,0d0,1,'N')
           Psi = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*Nex))/Vex)
           Psi = 0d0
-          ! print*,Vex,V,Sex,S,Nex,N
        end if
     case default
        Psi = 0d0
@@ -676,7 +504,7 @@ contains
 
   subroutine solve_friction(FR,V,S,N,Slock,eta,D,Psi,i,x,y,t,info)
 
-    use fields, only : bessel, inplane_fault_mms
+    use mms, only : bessel,inplane_fault_mms
     use io, only : error
 
     implicit none
@@ -718,6 +546,10 @@ contains
     case('locked')
        V = 0d0
        S = Slock
+       return
+    case('pseudodynamic')
+       V = pseudodynamicV(i,t,FR%pd)
+       S = Slock-eta*V
        return
     end select
 
@@ -1093,7 +925,7 @@ contains
 
   function state_rate(FR,V,Psi,i,x,y,t) result(DPsi)
 
-    use fields, only : inplane_fault_mms
+    use mms, only : inplane_fault_mms
 
     implicit none
 
@@ -1101,7 +933,7 @@ contains
     integer,intent(in) :: i
     real,intent(in) :: V,Psi,x,y,t
     real :: DPsi
-    real :: Vex,Sex,Nex,Psiex,Vtex,Stex,Ntex,fssex,frsex,ITF
+    real :: Vex,Sex,Nex,Psiex,Vtex,Stex,Ntex,fssex,frsex
 
     real :: absV,frs,fss,fLV,Psiss,Hmss
     type(ratestate_constant) :: rs
@@ -1114,7 +946,7 @@ contains
     absV = abs(V)
 
     select case(FR%friction_law)
-    case('frictionless')
+    case('frictionless','pseudodynamic','SW')
        DPsi = 0d0
        return
     end select
@@ -1128,8 +960,6 @@ contains
        frs = rs%a*log(absV/rs%V0)+Psi
        fss = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
        DPsi = -(absV/rs%L)*(frs-fss)
-       call load_force_time(FR,x,y,t,ITF)
-       DPsi = DPsi - (ITF)*(frs-FR%tld%fmin)
 
     case('FL')
 
@@ -1259,102 +1089,22 @@ contains
     real,intent(in) :: x
     real :: f
 
-    f = (exp(2d0*x)+1)/(exp(2d0*x)-1)
+    f = (exp(2d0*x)+1d0)/(exp(2d0*x)-1d0)
 
   end function coth
 
 
-  subroutine load_stress_derivative(FR,x,y,t,DS0,DN0,normal,Mm,Mp)
+  subroutine load_stress(FR,x,y,t,S0,N0)
 
     use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step
     use io, only : error
     use material, only : block_material
-    use geometry, only : rotate_xy2nt
-
-    implicit none
-
-    type(fr_type),intent(in) :: FR
-    type(block_material),intent(in) :: Mm,Mp
-    real,intent(in) :: x,y,t,normal(2)
-    real,intent(out) :: DS0,DN0
-
-    real :: r,A,Bt,xx,dip
-
-    select case(FR%problem)
-
-    case default ! specified via input parameters
-      if(trim(FR%problem) .eq. 'subduction') then
-        r = sqrt((x-FR%ld%x0)**2 + (y-FR%ld%y0)**2) / FR%ld%R
-      else
-        xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
-        !yy = -x*sin(FR%angle)+y*cos(FR%angle)
-        r = abs((xx-FR%ld%x0)/FR%ld%R)
-      end if
-
-       select case(FR%ld%shape)
-       case default
-          call error('Invalid load shape','load_stress_derivative')
-       case('')
-          A = 0d0
-       case('uniform')
-          A = 1d0
-       case('linear')
-          A = (xx-FR%ld%x0)/FR%ld%R
-       case('boxcar')
-          A = boxcar  (r,1d0,1d0,0d0)
-       case('triangle')
-          A = triangle(r,1d0,1d0,0d0)
-       case('smooth')
-          A = smooth  (r,1d0,1d0,0d0)
-       case('gaussian')
-          A = gaussian(r,1d0,1d0,0d0)
-       case('decaying_step')
-          A = decaying_step(x,FR%ld%x0,FR%ld%R,1d0,0d0)
-       end select
-
-       Bt = load_ramp_derivative(t,FR%ld)
-       
-       DS0 = FR%ld%S*A*Bt
-       DN0 = FR%ld%N*A*Bt
-
-    end select
-
-  end subroutine load_stress_derivative
-
-  subroutine load_force_time(FR,x,y,t,ITF)
-
-    use io, only : error
     use geometry, only : rotate_xy2nt
 
     implicit none
 
     type(fr_type),intent(in) :: FR
     real,intent(in) :: x,y,t
-    real,intent(out) :: ITF
-
-    real :: r
-
-    ITF = 0d0
-
-    if(.not. FR%tld%time_force) return
-
-    r = sqrt((x-FR%tld%x0)**2 + (y-FR%tld%y0)**2)/FR%tld%R
-    ITF = exp(-r**8)*(1d0+t*FR%tld%T)*FR%tld%ITmin
-
-  end subroutine load_force_time
-
-  subroutine load_stress(FR,x,y,t,S0,N0,normal,Mm,Mp,bS0,bN0)
-
-    use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step
-    use io, only : error
-    use material, only : block_material
-    use geometry, only : rotate_xy2nt
-
-    implicit none
-
-    type(fr_type),intent(in) :: FR
-    type(block_material),intent(in) :: Mm,Mp
-    real,intent(in) :: x,y,t,normal(2),bS0,bN0
     real,intent(out) :: S0,N0
 
     real :: r,A,B,xx,dip
@@ -1365,17 +1115,11 @@ contains
 
        ! work in rotated coordinates
 
-       if(trim(FR%problem) .eq. 'subduction') then
-         r = sqrt((x-FR%ld%x0)**2 + (y-FR%ld%y0)**2) / FR%ld%R
-         N0 = FR%subduction_N0+bN0
-         S0 = FR%subduction_f0*FR%subduction_N0+bS0
-       else
-         xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
-         !yy = -x*sin(FR%angle)+y*cos(FR%angle)
-         r = abs((xx-FR%ld%x0)/FR%ld%R)
-         N0 = 0
-         S0 = 0
-       end if
+       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
+       !yy = -x*sin(FR%angle)+y*cos(FR%angle)
+       r = abs((xx-FR%ld%x0)/FR%ld%R)
+       N0 = 0
+       S0 = 0
 
        select case(FR%ld%shape)
        case default
@@ -1527,8 +1271,7 @@ contains
        S0 = 22.2d0-10.09d0*y
        N0 = 37.0d0-16.82d0*y
        
-       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault                                     
-       
+       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault       
        r = abs((xx-FR%ld%x0)/FR%ld%R)
        A = gaussian(r,1d0,1d0,0d0)
        B = load_ramp(t,FR%ld)
@@ -1572,33 +1315,27 @@ contains
 
   end function load_ramp
 
-  function load_ramp_derivative(t,ld) result(Bt)
-    use io, only : error
+
+  function pseudodynamicV(i,t,pd) result(V)
 
     implicit none
 
+    integer,intent(in) :: i
     real,intent(in) :: t
-    type(load),intent(in) :: ld
-    real :: Bt
+    type(pseudodynamic),intent(in) :: pd
 
-    if (ld%T<=0d0) then
-      Bt = 0d0
-      ! call error('Cannot compute derivative with non-positive load time','load_ramp_derivative')
+    real :: V
+
+    real :: t0
+
+    if (t<=pd%trup(i)) then
+       V = 0d0
     else
-      if (t<0d0) then
-        Bt = 0d0
-      else
-        Bt = exp(-t/ld%T)/ld%T
-      end if
-      !if (t<=0d0) then
-      !   Bt = 0d0
-      !elseif (t<ld%T) then
-      !   Bt = -(2d0*exp((t-ld%T)**2/(t*(t-2d0*ld%T)))*(t-ld%T)*ld%T**2)/(t**2*(t-2*ld%T)**2) 
-      !else
-      !   Bt = 1d0
-      !end if
+       t0 = pd%Dmax(i)/(exp(1d0)*pd%Vpeak(i)) ! peak time/exponential decay time constant
+       V = pd%Dmax(i)/t0*((t-pd%trup(i))/t0)*exp(-(t-pd%trup(i))/t0) ! slip velocity
     end if
 
-  end function load_ramp_derivative
+  end function pseudodynamicV
+
 
 end module friction

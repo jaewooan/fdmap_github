@@ -3,34 +3,36 @@ module fields
   implicit none
 
   type :: bnd_fields
-     ! F = current fields
+     ! F = current fields (first grid data, then overwritten with hat variables)
      ! DF = field rates
      ! F0 = initial fields
+     ! M = material properties
      ! DE = rate of energy flow through boundary
      ! (integrate over boundary to get energy dissipation rate)
      ! E = total energy lost through boundary (DE integrated over time)
+     ! U = boundary displacement
+     ! DU = boundary displacement rate
      logical :: holds_bnd
      integer :: comm
-     real,dimension(:,:),allocatable :: U,DU,F,F0,DF,DF2 ! DF is the previous stages DF
+     real,dimension(:,:),allocatable :: U,DU,F,F0,DF,M
      real,dimension(:),allocatable :: E,DE
   end type bnd_fields
 
   type :: block_fields
-     logical :: energy_balance,displacement
+     logical :: energy_balance
      real :: F0(9),DE(4),E(4),Etot
      real,dimension(:),allocatable :: Hx,Hy
      type(bnd_fields) :: bndFL,bndFR,bndFB,bndFT
-     real,dimension(:,:,:),allocatable :: Wx,Wy ! PML fields
-     real,dimension(:,:,:),allocatable :: DWx,DWy ! PML fields
   end type block_fields
 
   type :: fields_type
      character(256) :: problem
-     logical :: displacement,energy_balance
-     integer :: nF,nC,nU,ns
+     logical :: displacement,energy_balance,peak
+     integer :: nF,nC,nU,ns,nEP
      real :: Etot
-     real,dimension(:,:,:),allocatable :: F,U,DU,DF
-     real,dimension(:,:),allocatable :: gammap,Dgammap,lambda
+     real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga
+     real,dimension(:,:,:),allocatable :: Wx,Wy,DWx,DWy ! PML fields
+     real,dimension(:,:),allocatable :: gammap,lambda
      real,dimension(:),allocatable :: Hx,Hy
   end type fields_type
 
@@ -38,8 +40,6 @@ module fields
     character(256) :: shape
     real :: x0,y0,Lx,Ly,vx,vy,vz,sxx,sxy,sxz,syy,syz,szz
   end type fields_perturb
-
-  real,save :: besselA
 
   interface rotate_fields_xy2nt
      module procedure rotate_fields_xy2nt_mode3,rotate_fields_xy2nt_mode2
@@ -53,16 +53,17 @@ module fields
 contains
 
 
-  subroutine init_fields(mode,iblock,C,B,G,BF,F,t,input,response, &
-      energy_balance,displacement,M,pmlx,pmly)
+  subroutine init_fields(mode,iblock,C,B,G,BF,F,t,input, &
+      energy_balance,displacement,peak,M,pmlx,pmly)
 
     use mpi_routines, only : new_communicator
-    use mpi_routines2d, only : cartesian
+    use mpi_routines2d, only : cartesian,allocate_array_body
     use grid, only : block_grid,grid_type,set_block_limits
     use io, only : error,seek_to_string
     use utilities, only : deg2rad
     use fd, only : limits,Hnorm
     use material, only : block_material
+    use mms, only : besselA
 
     implicit none
 
@@ -74,26 +75,26 @@ contains
     type(block_fields),intent(out) :: BF
     type(fields_type),intent(inout) :: F
     real,intent(in) :: t
-    character(*),intent(in) :: response
-    logical,intent(in) :: energy_balance,displacement,pmlx,pmly
+    logical,intent(in) :: energy_balance,displacement,pmlx,pmly,peak
 
     integer :: stat
-    real :: V0,Psi,vx0,vy0,vz0,sxx0,sxy0,sxz0,syy0,syz0,szz0
+    real :: Psi,vx0,vy0,vz0,sxx0,sxy0,sxz0,syy0,syz0,szz0
     character(256) :: problem
     character(256) :: str
-    type(fields_perturb) :: P1,P2,P3,P4
+    ! P5 does not influence boundary conditions only interior
+    type(fields_perturb) :: P1,P2,P3,P4,P5
     real,dimension(:),allocatable :: F0
     type(limits) :: lim
 
-    namelist /fields_list/ problem,V0,Psi,vx0,vy0,vz0, &
+    namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
-         P1,P2,P3,P4,besselA
+         P1,P2,P3,P4,P5,besselA
+
 
     ! defaults
 
     problem = ''
 
-    V0 = 0d0
     Psi = 0d0
 
     vx0 = 0d0
@@ -111,6 +112,7 @@ contains
     P2 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
     P3 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
     P4 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
+    P5 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
 
     besselA = 0d0
 
@@ -125,12 +127,12 @@ contains
 
     F%energy_balance = energy_balance
     BF%energy_balance = energy_balance
-    BF%displacement = displacement
     F%displacement = displacement
+    F%peak = peak
 
     select case(F%problem)
     case default
-    case('uniform','rough') ! initial velocity = 0 => uniform state variable (set elsewhere)
+    case('uniform') ! initial velocity = 0 => uniform state variable (set elsewhere)
        ! syy0 and sxy0 given, set sxx0 using Psi
        if (Psi==45d0) then
           sxx0 = syy0 ! special case, avoid tan(pi/2)=Inf
@@ -139,21 +141,6 @@ contains
        end if
        ! set szz0 as average of sxx0 and syy0
        szz0 = 0.5d0*(sxx0+syy0)
-    case('rough-old') ! initial velocity nonzero => heterogeneous state variable for rough fault
-       ! syy0 and sxy0 given, set sxx0 using Psi
-       if (Psi==45d0) then
-          sxx0 = syy0 ! special case, avoid tan(pi/2)=Inf
-       else
-          sxx0 = (1d0-2d0*sxy0/(syy0*tan(2d0*deg2rad(Psi))))*syy0
-       end if
-       ! set szz0 as average of sxx0 and syy0
-       szz0 = 0.5d0*(sxx0+syy0)
-       V0 = 5.4857d-12*exp((sxy0-30.605904d0)/2.016d0)
-       if (mod(iblock,2)==0) then
-          vx0 =  0.5d0*V0 ! above fault
-       else
-          vx0 = -0.5d0*V0 ! below fault
-       end if
     end select
 
     F%Etot = 1d40
@@ -165,6 +152,7 @@ contains
     select case(mode)
     case(2)
        F%nF = 6
+       F%nEP = 6
        F%nC = 5
        F%nU = 2
        F%ns = 4
@@ -172,6 +160,7 @@ contains
        F0 = (/ vx0,vy0,sxx0,sxy0,syy0,szz0 /)
     case(3)
        F%nF = 3
+       F%nEP = 6
        F%nC = 3
        F%nU = 1
        F%ns = 2
@@ -182,52 +171,51 @@ contains
     ! allocate memory for fields
 
     if (.not.allocated(F%F)) then
-       allocate(F%F(C%mbx:C%pbx,C%mby:C%pby,F%nF))
-       if(F%displacement) allocate(F%U(C%mx:C%px,C%my:C%py,F%nU))
-       if(F%displacement) allocate(F%DU(C%mx:C%px,C%my:C%py,F%nU))
-       allocate(F%DF(C%mx:C%px,C%my:C%py,F%nF))
+       call allocate_array_body(F%F ,C,F%nF,ghost_nodes=.true.)
+       call allocate_array_body(F%DF,C,F%nF,ghost_nodes=.false.)
+       if(F%displacement) then
+          call allocate_array_body(F%U ,C,F%nU,ghost_nodes=.false.,Fval=0d0)
+          call allocate_array_body(F%DU,C,F%nU,ghost_nodes=.false.)
+       end if
+       if(F%peak) then
+          call allocate_array_body(F%pgv,C,1,ghost_nodes=.false.,Fval=0d0)
+          call allocate_array_body(F%pga,C,1,ghost_nodes=.false.,Fval=0d0)
+       end if
        allocate(F%Hx(C%mx:C%px),F%Hy(C%my:C%py))
-       F%F = 1d40
-       if(F%displacement) F%U = 0d0
-       if(F%displacement) F%DU = 1d40
-       F%DF = 1d40
        F%Hx = 1d40
        F%Hy = 1d40
-       if (index(response,'plastic')/=0) then
-          allocate(F%gammap(C%mx:C%px,C%my:C%py),F%Dgammap(C%mx:C%px,C%my:C%py))
-          allocate(F%lambda(C%mx:C%px,C%my:C%py))
-          F%gammap = 0d0
-          F%Dgammap = 0d0
-          F%lambda = 0d0
+       if (M%response=='plastic') then
+          call allocate_array_body(F%gammap ,C,ghost_nodes=.false.,Fval=0d0)
+          call allocate_array_body(F%lambda ,C,ghost_nodes=.false.,Fval=0d0)
+       end if
+
+       if(M%plastic_strain_tensor) then
+         call allocate_array_body(F%Ep ,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
        end if
     end if
-    if (pmlx) then
-      allocate(BF%Wx(B%mx:B%px,B%my:B%py,F%nF))
-      BF%Wx = 0d0
-      allocate(BF%DWx(B%mx:B%px,B%my:B%py,F%nF))
-      BF%DWx = 1d40
+    if (pmlx .and. .not.allocated(F%Wx)) then
+      call allocate_array_body(F%Wx, C,F%nF,ghost_nodes=.false.,Fval=0d0)
+      call allocate_array_body(F%DWx,C,F%nF,ghost_nodes=.false.,Fval=0d0)
     end if
-    if (pmly) then
-      allocate(BF%Wy(B%mx:B%px,B%my:B%py,F%nF))
-      BF%Wy = 0d0
-      allocate(BF%DWy(B%mx:B%px,B%my:B%py,F%nF))
-      BF%DWy = 1d40
+    if (pmly .and. .not.allocated(F%Wy)) then
+      call allocate_array_body(F%Wy, C,F%nF,ghost_nodes=.false.,Fval=0d0)
+      call allocate_array_body(F%DWy,C,F%nF,ghost_nodes=.false.,Fval=0d0)
     end if
 
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,F%displacement,M)
+         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
     call init_fields_side(B%bndR,BF%bndFR,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,F%displacement,M)
+         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
     call init_fields_side(B%bndB,BF%bndFB,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,F%displacement,M)
+         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
     call init_fields_side(B%bndT,BF%bndFT,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,F%displacement,M)
+         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
 
     ! initialize fields in interior of this block
 
-    call init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,M)
+    call init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,P5,M)
 
     deallocate(F0)
 
@@ -281,7 +269,7 @@ contains
     if (allocated(F%U      )) deallocate(F%U      )
     if (allocated(F%DU     )) deallocate(F%DU     )
     if (allocated(F%gammap )) deallocate(F%gammap )
-    if (allocated(F%Dgammap)) deallocate(F%Dgammap)
+    if (allocated(F%EP     )) deallocate(F%EP     )
     if (allocated(F%lambda )) deallocate(F%lambda )
     if (allocated(F%Hx     )) deallocate(F%Hx     )
     if (allocated(F%Hy     )) deallocate(F%Hy     )
@@ -310,11 +298,11 @@ contains
     type(bnd_fields),intent(inout) :: bndF
 
     if (allocated(bndF%F  )) deallocate(bndF%F  )
+    if (allocated(bndF%DF )) deallocate(bndF%DF )
+    if (allocated(bndF%F0 )) deallocate(bndF%F0 )
+    if (allocated(bndF%M  )) deallocate(bndF%M  )
     if (allocated(bndF%U  )) deallocate(bndF%U  )
     if (allocated(bndF%DU )) deallocate(bndF%DU )
-    if (allocated(bndF%DF )) deallocate(bndF%DF )
-    if (allocated(bndF%DF2)) deallocate(bndF%DF2)
-    if (allocated(bndF%F0 )) deallocate(bndF%F0 )
     if (allocated(bndF%E  )) deallocate(bndF%E  )
     if (allocated(bndF%DE )) deallocate(bndF%DE )
 
@@ -360,12 +348,20 @@ contains
           call read_file_distributed(fh,F%DF(:,:,l))
        end do
        do l = 1,F%nU
-         if(F%displacement) call read_file_distributed(fh,F%U(C%mx:C%px,C%my:C%py,l))
+         if(F%displacement) call read_file_distributed(fh,F%U( C%mx:C%px,C%my:C%py,l))
          if(F%displacement) call read_file_distributed(fh,F%DU(C%mx:C%px,C%my:C%py,l))
        end do
+       if(F%peak) call read_file_distributed(fh,F%pgv(C%mx:C%px,C%my:C%py,1))
+       if(F%peak) call read_file_distributed(fh,F%pga(C%mx:C%px,C%my:C%py,1))
        if (allocated(F%gammap )) call read_file_distributed(fh,F%gammap )
-       if (allocated(F%Dgammap)) call read_file_distributed(fh,F%Dgammap)
        if (allocated(F%lambda )) call read_file_distributed(fh,F%lambda )
+       if (allocated(F%Wx     )) call read_file_distributed(fh,F%Wx     )
+       if (allocated(F%Wy     )) call read_file_distributed(fh,F%Wy     )
+       if (allocated(F%EP     )) then
+         do l = 1,F%nEP
+           call read_file_distributed(fh,F%EP(C%mx:C%px,C%my:C%py,l))
+         end do
+       end if
     case('write')
        do l = 1,F%nF
           call write_file_distributed(fh,F%F(C%mx:C%px,C%my:C%py,l))
@@ -374,12 +370,20 @@ contains
           call write_file_distributed(fh,F%DF(:,:,l))
        end do
        do l = 1,F%nU
-         if(F%displacement) call write_file_distributed(fh,F%U(:,:,l))
+         if(F%displacement) call write_file_distributed(fh,F%U( :,:,l))
          if(F%displacement) call write_file_distributed(fh,F%DU(:,:,l))
        end do
+       if(F%peak) call write_file_distributed(fh,F%pgv(:,:,1))
+       if(F%peak) call write_file_distributed(fh,F%pga(:,:,1))
        if (allocated(F%gammap )) call write_file_distributed(fh,F%gammap )
-       if (allocated(F%Dgammap)) call write_file_distributed(fh,F%Dgammap)
        if (allocated(F%lambda )) call write_file_distributed(fh,F%lambda )
+       if (allocated(F%Wx     )) call write_file_distributed(fh,F%Wx     )
+       if (allocated(F%Wy     )) call write_file_distributed(fh,F%Wy     )
+       if (allocated(F%EP     )) then
+         do l = 1,F%nEP
+           call write_file_distributed(fh,F%EP(C%mx:C%px,C%my:C%py,l))
+         end do
+       end if
     end select
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
@@ -409,7 +413,7 @@ contains
 
     type(file_distributed) :: fh
     character(1) :: side_str
-    character(256) :: filename,filenameE,filenameWx,filenameWy
+    character(256) :: filename,filenameE
     integer :: comm,array,side,l,ierr,rank
     logical :: io_process
 
@@ -434,10 +438,6 @@ contains
             'block',iblock,side_str // '.ckpt',checkpoint_number
        write(filenameE,'(a,i0,a,i0)') trim(adjustl(name)) // &
             'Eblock',iblock,'.ckpt',checkpoint_number
-       write(filenameWx,'(a,i0,a,i0)') trim(adjustl(name)) // &
-            'pmlWx',iblock,'.ckpt',checkpoint_number
-       write(filenameWy,'(a,i0,a,i0)') trim(adjustl(name)) // &
-            'pmlWy',iblock,'.ckpt',checkpoint_number
 
        if (operation=='delete') then
           if (is_master) call MPI_file_delete(filename ,MPI_INFO_NULL,ierr)
@@ -470,8 +470,8 @@ contains
                    call read_file_distributed(fh,BF%bndFL%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFL%U(:,l))
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFL%DU(:,l))
+                  call read_file_distributed(fh,BF%bndFL%U( :,l))
+                  call read_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%E)
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%DE)
@@ -481,8 +481,8 @@ contains
                    call read_file_distributed(fh,BF%bndFR%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFR%U(:,l))
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFR%DU(:,l))
+                  call read_file_distributed(fh,BF%bndFR%U( :,l))
+                  call read_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%E)
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%DE)
@@ -492,8 +492,8 @@ contains
                    call read_file_distributed(fh,BF%bndFB%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFB%U(:,l))
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFB%DU(:,l))
+                  call read_file_distributed(fh,BF%bndFB%U( :,l))
+                  call read_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%E)
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%DE)
@@ -503,8 +503,8 @@ contains
                    call read_file_distributed(fh,BF%bndFT%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFT%U(:,l))
-                  if(F%displacement) call read_file_distributed(fh,BF%bndFT%DU(:,l))
+                  call read_file_distributed(fh,BF%bndFT%U( :,l))
+                  call read_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%E)
                 if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%DE)
@@ -517,8 +517,8 @@ contains
                    call write_file_distributed(fh,BF%bndFL%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFL%U(:,l))
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFL%DU(:,l))
+                  call write_file_distributed(fh,BF%bndFL%U( :,l))
+                  call write_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%E)
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%DE)
@@ -528,8 +528,8 @@ contains
                    call write_file_distributed(fh,BF%bndFR%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFR%U(:,l))
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFR%DU(:,l))
+                  call write_file_distributed(fh,BF%bndFR%U( :,l))
+                  call write_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%E)
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%DE)
@@ -539,8 +539,8 @@ contains
                    call write_file_distributed(fh,BF%bndFB%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFB%U(:,l))
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFB%DU(:,l))
+                  call write_file_distributed(fh,BF%bndFB%U( :,l))
+                  call write_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%E)
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%DE)
@@ -550,8 +550,8 @@ contains
                    call write_file_distributed(fh,BF%bndFT%F0(:,l))
                 end do
                 do l = 1,F%nU
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFT%U(:,l))
-                  if(F%displacement) call write_file_distributed(fh,BF%bndFT%DU(:,l))
+                  call write_file_distributed(fh,BF%bndFT%U( :,l))
+                  call write_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%E)
                 if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%DE)
@@ -595,32 +595,6 @@ contains
     io_process = .not.B%skip
     call new_communicator(io_process,comm)
 
-    if (.not.B%skip.and.allocated(BF%Wx)) then
-       call subarray(B%pgx,B%pgy,F%nf,B%mx,B%px,B%my,B%py,1,F%nf,MPI_REAL_PW,array)
-       call open_file_distributed(fh,filenameWx,operation,comm,array,pw)
-       select case(operation)
-       case('read') ! all block processes read same file
-          call read_file_distributed(fh,BF%Wx)
-       case('write') ! only block master process writes file
-         call write_file_distributed(fh,BF%Wx)
-       end select
-       call close_file_distributed(fh)
-       call MPI_Type_free(array,ierr)
-    end if
-
-    if (io_process.and.allocated(BF%Wy)) then
-       call subarray(B%pgx,B%pgy,F%nf,B%mx,B%px,B%my,B%py,1,F%nf,MPI_REAL_PW,array)
-       call open_file_distributed(fh,filenameWy,operation,comm,array,pw)
-       select case(operation)
-       case('read') ! all block processes read same file
-          call read_file_distributed(fh,BF%Wy)
-       case('write') ! only block master process writes file
-         call write_file_distributed(fh,BF%Wy)
-       end select
-       call close_file_distributed(fh)
-       call MPI_Type_free(array,ierr)
-    end if
-
     if(io_process) call MPI_Comm_free(comm,ierr)
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
@@ -628,142 +602,7 @@ contains
   end subroutine checkpoint_block_fields
 
 
-  subroutine cycle_stress_fields(F,G,BF,BG,BM,mode,z,H,vp,dt)
-
-    use grid, only : block_grid, grid_type
-    use material, only : block_material
-    implicit none
-
-    type(fields_type),intent(inout) :: F
-    type(grid_type),intent(inout) :: G
-    type(block_fields),intent(inout) :: BF
-    type(block_grid),intent(in) :: BG
-    type(block_material),intent(inout) :: BM
-
-    integer,intent(in) :: mode
-    real,intent(in) :: z,H,vp,dt
-
-    integer :: l,lv,i,j
-    real :: stress
-
-
-    if(BG%skip) return
-
-    ! set particle velocities to zero
-
-    select case(mode)
-    case(2)
-       lv = 2
-    case(3)
-       lv = 1
-    end select
-
-    do l = 1,lv
-
-       do j = BG%my,BG%py
-          do i = BG%mx,BG%px
-             F%F(i,j,l) = 0d0
-          end do
-       end do
-
-       if(BG%sideL) then
-       BF%bndFL%F (:,l) = 0d0
-       BF%bndFL%F0(:,l) = 0d0
-       endif
-
-       if(BG%sideR) then
-       BF%bndFR%F (:,l) = 0d0
-       BF%bndFR%F0(:,l) = 0d0
-       endif
-
-       if(BG%sideB) then
-       BF%bndFB%F (:,l) = 0d0
-       BF%bndFB%F0(:,l) = 0d0
-       end if
-
-       if(BG%sideT) then
-       BF%bndFT%F (:,l) = 0d0
-       BF%bndFT%F0(:,l) = 0d0
-       endif
-
-    end do
-
-    select case(mode)
-    case(2)
-       l = 4 ! sxy
-    case(3)
-       l = 3
-    end select
-
-
-    do j = BG%my,BG%py
-       do i = BG%mx,BG%px
-       call interseismic_stress(G%x(i,j),G%y(i,j),z,H,BM%G,vp,dt,stress)
-          F%F(i,j,l) = F%F(i,j,l)+stress
-       end do
-    end do
-
-
-
-    if(BG%sideL) then
-       do j = BG%my,BG%py
-
-          call interseismic_stress(BG%bndL%x(j),BG%bndL%y(j),z,H,BM%G,vp,dt,stress)
-
-          BF%bndFL%F (j,l) = BF%bndFL%F (j,l)+stress
-          BF%bndFL%F0(j,l) = BF%bndFL%F0(j,l)+stress
-       enddo
-    endif
-
-    if(BG%sideR) then
-       do j = BG%my,BG%py
-          call interseismic_stress(BG%bndR%x(j),BG%bndR%y(j),z,H,BM%G,vp,dt,stress)
-
-          BF%bndFR%F (j,l) = BF%bndFR%F (j,l)+stress
-          BF%bndFR%F0(j,l) = BF%bndFR%F0(j,l)+stress
-
-       end do
-    endif
-
-    if(BG%sideB) then
-       do i = BG%mx,BG%px
-          call interseismic_stress(BG%bndB%x(i),BG%bndB%y(i),z,H,BM%G,vp,dt,stress)
-
-          BF%bndFB%F (i,l) = BF%bndFB%F (i,l)+stress
-          BF%bndFB%F0(i,l) = BF%bndFB%F0(i,l)+stress
-       enddo
-    endif
-
-    if(BG%sideT) then
-       do i = BG%mx,BG%px
-          call interseismic_stress(BG%bndT%x(i),BG%bndT%y(i),z,H,BM%G,vp,dt,stress)
-
-          BF%bndFT%F (i,l) = BF%bndFT%F (i,l)+stress
-          BF%bndFT%F0(i,l) = BF%bndFT%F0(i,l)+stress
-
-       end do
-    endif
-
-
-  end subroutine cycle_stress_fields
-
-
-  subroutine interseismic_stress(x,y,z,H,shear_mod,vp,dt,stress)
-
-    implicit none
-
-    real,intent(in) :: x,y,z,H,shear_mod,vp,dt  !Dislocation at z = H,  z = h is where cross-section is taken
-    real,intent(out) :: stress
-
-    real,parameter :: pi = 3.141592653589793d0
-
-
-    stress = (shear_mod*vp*dt/(2d0*pi))*(   (z+H)/((z+H)**2 + y**2) + (H-z)/((H-z)**2+y**2)  )
-
-  end subroutine interseismic_stress
-
-
-  subroutine init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,M)
+  subroutine init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,P5,M)
 
     use grid, only : grid_type,block_grid
     use material, only : block_material
@@ -777,11 +616,11 @@ contains
     real,intent(in) :: F0(:),t
     integer,intent(in) :: mode,iblock
     character(*),intent(in) :: problem
-    type(fields_perturb),intent(in) :: P1,P2,P3,P4
+    type(fields_perturb),intent(in) :: P1,P2,P3,P4,P5
 
     integer :: i,j
-    real :: A1,A2,A3,A4
-    real,dimension(F%nF) :: F1,F2,F3,F4
+    real :: A1,A2,A3,A4,A5
+    real,dimension(F%nF) :: F1,F2,F3,F4,F5
 
     if (B%skip) return ! no points in this block
 
@@ -791,11 +630,13 @@ contains
        F2 = (/ P2%vx,P2%vy,P2%sxx,P2%sxy,P2%syy,P2%szz /)
        F3 = (/ P3%vx,P3%vy,P3%sxx,P3%sxy,P3%syy,P3%szz /)
        F4 = (/ P4%vx,P4%vy,P4%sxx,P4%sxy,P4%syy,P4%szz /)
+       F5 = (/ P5%vx,P5%vy,P5%sxx,P5%sxy,P5%syy,P5%szz /)
     case(3)
        F1 = (/ P1%vz,P1%sxz,P1%syz /)
        F2 = (/ P2%vz,P2%sxz,P2%syz /)
        F3 = (/ P3%vz,P3%sxz,P3%syz /)
        F4 = (/ P4%vz,P4%sxz,P4%syz /)
+       F5 = (/ P5%vz,P5%sxz,P5%syz /)
     end select
 
     do j = B%my,B%py
@@ -804,7 +645,8 @@ contains
           A2 = perturb_fields(G%x(i,j),G%y(i,j),P2)
           A3 = perturb_fields(G%x(i,j),G%y(i,j),P3)
           A4 = perturb_fields(G%x(i,j),G%y(i,j),P4)
-          F%F(i,j,:) = F0+A1*F1+A2*F2+A3*F3+A4*F4
+          A5 = perturb_fields(G%x(i,j),G%y(i,j),P5)
+          F%F(i,j,:) = F0+A1*F1+A2*F2+A3*F3+A4*F4+A5*F5
           call initial_fields(F%F(i,j,:),G%x(i,j),G%y(i,j),t,problem,iblock,M)
        end do
     end do
@@ -813,7 +655,7 @@ contains
 
 
   subroutine init_fields_side(bnd,bndF,Bskip,m,p,nF,nU,F0,mode,problem,t,iblock,&
-      P1,P2,P3,P4,energy_balance,displacement,Mat)
+      P1,P2,P3,P4,energy_balance,Mat)
 
     use geometry, only : curve
     use material, only : block_material
@@ -822,7 +664,7 @@ contains
 
     type(curve),intent(in) :: bnd
     type(bnd_fields),intent(inout) :: bndF
-    logical,intent(in) :: Bskip,energy_balance,displacement
+    logical,intent(in) :: Bskip,energy_balance
     integer,intent(in) :: m,p,nF,nU
     real,intent(in) :: F0(:),t
     integer,intent(in) :: mode,iblock
@@ -847,16 +689,14 @@ contains
        F4 = (/ P4%vz,P4%sxz,P4%syz /)
     end select
 
-    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF))
+    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
     bndF%F  = 1d40
     bndF%F0 = 1d40
+    bndF%M  = 1d40
 
-    if(displacement) then
-      allocate(bndF%U(m:p,nU))
-      allocate(bndF%DU(m:p,nU))
-      bndF%U  = 0d0
-      bndF%DU  = 1d40
-    end if
+    allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
+    bndF%U  = 0d0
+    bndF%DU  = 1d40
 
     if (energy_balance) then
        allocate(bndF%E(m:p),bndF%DE(m:p))
@@ -877,28 +717,10 @@ contains
        A3 = perturb_fields(bnd%x(i),bnd%y(i),P3)
        A4 = perturb_fields(bnd%x(i),bnd%y(i),P4)
        bndF%F0(i,:) = F0+A1*F1+A2*F2+A3*F3+A4*F4
-       call initial_fields(bndF%F0(i,:),bnd%x(i),bnd%y(i),t,problem,iblock,Mat,.true.)
+       call initial_fields(bndF%F0(i,:),bnd%x(i),bnd%y(i),t,problem,iblock,Mat)
     end do
 
   end subroutine init_fields_side
-
-  subroutine init_fields_side_rate(bndF)
-
-    implicit none
-
-    type(bnd_fields),intent(inout) :: bndF
-    integer :: m,p,nF
-
-    if(.not.allocated(bndF%F)) return
-
-    nF = size(bndF%F,2)
-    m = lbound(bndF%F,1)
-    p = ubound(bndF%F,1)
-    allocate(bndF%DF(m:p,nF), bndF%DF2(m:p,nF))
-    bndF%DF = 1d40
-    bndF%DF2 = 1d40
-
-  end subroutine init_fields_side_rate
 
 
   function perturb_fields(x,y,P) result(A)
@@ -936,10 +758,11 @@ contains
   end function perturb_fields
 
 
-  subroutine initial_fields(F,x,y,t,problem,iblock,M,bnd_call)
+  subroutine initial_fields(F,x,y,t,problem,iblock,M)
 
     use utilities, only : step
     use material, only : block_material
+    use mms, only : bessel,inplane_bessel,inplane_fault_mms,mms_sin
 
     implicit none
 
@@ -948,28 +771,8 @@ contains
     character(*),intent(in) :: problem
     integer,intent(in) :: iblock
     type(block_material), intent(in) :: M
-    logical,intent(in),optional :: bnd_call
-    logical :: b_call
-
-    real :: dip
-
-    if(present(bnd_call)) then
-        b_call = bnd_call
-    else
-        b_call = .false.
-    endif
 
     select case(problem)
-    case('break')
-        if(b_call) then
-            F(1) = F(1)+0d0
-            F(2) = F(2)+0d0
-            F(3) = F(3)+0d0
-        else
-            F(1) = F(1)+1d0
-            F(2) = F(2)+1d0
-            F(3) = F(3)+1d0
-        endif
     case('bessel')
        ! verification using method of manufactured solutions
        ! (with bessel function solution in interior)
@@ -978,12 +781,12 @@ contains
        F(2) = F(2)+bessel(x,y,t,iblock,'sxz')
        F(3) = F(3)+bessel(x,y,t,iblock,'syz')
     case('inplane-bessel')
-       F(1) = F(1)+inplane_bessel(x,y,t,M,'vx')
-       F(2) = F(2)+inplane_bessel(x,y,t,M,'vy')
-       F(3) = F(3)+inplane_bessel(x,y,t,M,'sxx')
-       F(4) = F(4)+inplane_bessel(x,y,t,M,'sxy')
-       F(5) = F(5)+inplane_bessel(x,y,t,M,'syy')
-       F(6) = F(6)+inplane_bessel(x,y,t,M,'szz')
+       F(1) = F(1)+inplane_bessel(x,y,t,'vx')
+       F(2) = F(2)+inplane_bessel(x,y,t,'vy')
+       F(3) = F(3)+inplane_bessel(x,y,t,'sxx')
+       F(4) = F(4)+inplane_bessel(x,y,t,'sxy')
+       F(5) = F(5)+inplane_bessel(x,y,t,'syy')
+       F(6) = F(6)+inplane_bessel(x,y,t,'szz')
     case('inplane-fault-mms','inplane-fault-mms-nostate')
        F(1) = F(1)+inplane_fault_mms(x,y,t,iblock,'vx')
        F(2) = F(2)+inplane_fault_mms(x,y,t,iblock,'vy')
@@ -1016,11 +819,6 @@ contains
        F(4) = F(4)+mms_sin(x,y,t,iblock,'sxy')
        F(5) = F(5)+mms_sin(x,y,t,iblock,'syy')
        F(6) = F(6)+mms_sin(x,y,t,iblock,'szz')
-    case('TPV12','TPV13')
-       dip = 2d0*x
-       F(3) = F(3)+step(dip,13.8d0, 5.8243d0*y,16.6600d0*y) ! sxx
-       F(5) = F(5)+step(dip,13.8d0,16.6600d0*y,16.6600d0*y) ! syy
-       F(6) = F(6)+step(dip,13.8d0,11.2422d0*y,16.6600d0*y) ! szz
     end select
 
   end subroutine initial_fields
@@ -1062,27 +860,6 @@ contains
           s(5) = 0d0 ! syz
           s(6) = s0(6)
        end select
-    case('TPV12alt','TPV13alt')
-       s = s0
-       dip = 2d0*x
-       s(1) = s(1)+step(dip,13.8d0, 5.8243d0*y,16.6600d0*y) ! sxx
-       s(4) = s(4)+step(dip,13.8d0,16.6600d0*y,16.6600d0*y) ! syy
-       s(6) = s(6)+step(dip,13.8d0,11.2422d0*y,16.6600d0*y) ! szz
-    case('YM')
-       s = s0
-       s(1) = s(1)+ 5.8243d0*y ! sxx
-       s(4) = s(4)+16.6600d0*y ! syy
-       s(6) = s(6)+11.2422d0*y ! szz
-    case('BU')
-       s = s0
-       s(1) = s(1)+ 8.6d0*y ! sxx
-       s(4) = s(4)+15.2d0*y ! syy
-       s(6) = s(6)+10.4d0*y ! szz
-    case('SB')
-       s = s0
-       s(1) = s(1)-75.46d0+34.3d0*y ! sxx
-       s(4) = s(4)-24.2d0 +11.0d0*y ! syy
-       s(6) = s(6)-28.6d0 +13.0d0*y ! szz
     end select
 
   end subroutine initial_stress
@@ -1098,32 +875,33 @@ contains
     type(fields_type),intent(inout) :: F
     real,intent(in) :: A
 
-    call sri3d(C%mx,C%my,1,F%DF,A,C%mx,C%px,C%my,C%py,1,F%nF)
-    if (allocated(F%Dgammap)) &
-      call sri2d(C%mx,C%my,F%Dgammap,A,C%mx,C%px,C%my,C%py)
+    call   sri3d(C%mx,C%my,1,F%DF ,A,C%mx,C%px,C%my,C%py,1,F%nF)
     if(allocated(F%DU)) &
-      call sri3d(C%mx,C%my,1,F%DU,A,C%mx,C%px,C%my,C%py,1,F%nU)
+      call sri3d(C%mx,C%my,1,F%DU ,A,C%mx,C%px,C%my,C%py,1,F%nU)
+    if(allocated(F%Wx)) &
+      call sri3d(C%mx,C%my,1,F%DWx,A,C%mx,C%px,C%my,C%py,1,F%nF)
+    if(allocated(F%Wy)) &
+      call sri3d(C%mx,C%my,1,F%DWy,A,C%mx,C%px,C%my,C%py,1,F%nF)
 
   end subroutine scale_rates_interior
 
-  subroutine scale_rates_pml(BF,A,B,nf)
+
+  subroutine scale_rates_boundary(B,BF,A)
+
     use grid, only : block_grid
 
     implicit none
 
-    type(block_fields),intent(inout) :: BF
     type(block_grid),intent(in) :: B
+    type(block_fields),intent(inout) :: BF
     real,intent(in) :: A
-    integer,intent(in) :: nf
 
-    if(allocated(BF%DWx))&
-      call sri3d(B%mx,B%my,1,BF%DWx,A,B%mx,B%px,B%my,B%py,1,nF)
-      ! BF%DWx = A*BF%DWx
-    if(allocated(BF%DWy))&
-      call sri3d(B%mx,B%my,1,BF%DWy,A,B%mx,B%px,B%my,B%py,1,nF)
-      ! BF%DWy = A*BF%DWy
+    if (B%sideL) BF%bndFL%DU = A*BF%bndFL%DU
+    if (B%sideR) BF%bndFR%DU = A*BF%bndFR%DU
+    if (B%sideB) BF%bndFB%DU = A*BF%bndFB%DU
+    if (B%sideT) BF%bndFT%DU = A*BF%bndFT%DU
 
-  end subroutine scale_rates_pml
+  end subroutine scale_rates_boundary
 
 
   subroutine sri2d(lbndx,lbndy,F,A,mx,px,my,py)
@@ -1162,25 +940,36 @@ contains
   end subroutine sri3d
 
 
-  subroutine update_pml(B,BF,dt,nf)
+  subroutine update_fields_peak(C,F,mode)
 
-    use grid, only : block_grid
+    use mpi_routines2d, only : cartesian
 
     implicit none
 
-    type(block_fields),intent(inout) :: BF
-    type(block_grid),intent(in) :: B
-    real,intent(in) :: dt
-    integer,intent(in) :: nf
+    type(cartesian),intent(in) :: C
+    type(fields_type),intent(inout) :: F
+    integer,intent(in) :: mode
+    integer :: i,j
 
-    if(allocated(BF%Wx))&
-      call ufi3d(B%mx,B%my,1,B%mx,B%my,1,BF%Wx,BF%DWx,dt,B%mx,B%px,B%my,B%py,1,nF)
-      ! BF%Wx = BF%Wx + dt*BF%DWx
-    if(allocated(BF%Wy))&
-      call ufi3d(B%mx,B%my,1,B%mx,B%my,1,BF%Wy,BF%DWy,dt,B%mx,B%px,B%my,B%py,1,nF)
-      ! BF%Wy = BF%Wy + dt*BF%DWy
+    select case(mode)
+    case(2)
+      do j = C%my,C%py
+        do i = C%mx,C%px
+          F%pgv(i,j,1) = max(F%pgv(i,j,1),sqrt(F%F( i,j,1)**2 + F%F( i,j,2)**2))
+          F%pga(i,j,1) = max(F%pga(i,j,1),sqrt(F%DF(i,j,1)**2 + F%DF(i,j,2)**2))
+        end do
+      end do
+    case(3)
+      do j = C%my,C%py
+        do i = C%mx,C%px
+          F%pgv(i,j,1) = max(F%pgv(i,j,1),abs(F%F( i,j,1)))
+          F%pga(i,j,1) = max(F%pga(i,j,1),abs(F%DF(i,j,1)))
+        end do
+      end do
+    end select
 
-  end subroutine update_pml
+  end subroutine update_fields_peak
+
 
   subroutine update_fields_interior(C,F,dt)
 
@@ -1193,19 +982,18 @@ contains
     real,intent(in) :: dt
 
     call ufi3d(C%mbx,C%mby,1,C%mx,C%my,1,F%F,F%DF,dt,C%mx,C%px,C%my,C%py,1,F%nF)
-    if (allocated(F%gammap)) &
-      call ufi2d(C%mx,C%my,C%mx,C%my,F%gammap,F%Dgammap,dt,C%mx,C%px,C%my,C%py)
-    if(F%displacement) then
-      ! First add the velocity to the rate
-      call ufi3d(C%mx,C%my,1,C%mbx,C%mby,1,F%DU,F%F,1d0,C%mx,C%px,C%my,C%py,1,F%nU)
 
-      ! Then update the displacement
-      call ufi3d(C%mx,C%my,1,C%mx,C%my,1,F%U,F%DU,dt,C%mx,C%px,C%my,C%py,1,F%nU)
-    end if
-
+    if (F%displacement) &
+         call ufi3d(C%mx,C%my,1,C%mx,C%my,1,F%U ,F%DU ,dt,C%mx,C%px,C%my,C%py,1,F%nU)
+    if (allocated(F%Wx)) &
+         call ufi3d(C%mx,C%my,1,C%mx,C%my,1,F%Wx,F%DWx,dt,C%mx,C%px,C%my,C%py,1,F%nF)
+    if (allocated(F%Wy)) &
+         call ufi3d(C%mx,C%my,1,C%mx,C%my,1,F%Wy,F%DWy,dt,C%mx,C%px,C%my,C%py,1,F%nF)
+    
   end subroutine update_fields_interior
 
-  subroutine update_displacement(B,BF,dt,nU)
+
+  subroutine update_fields_boundary(B,BF,dt)
 
     use grid, only : block_grid
 
@@ -1214,31 +1002,14 @@ contains
     type(block_grid),intent(in) :: B
     type(block_fields),intent(inout) :: BF
     real,intent(in) :: dt
-    integer,intent(in) :: nU
 
-    if (.not.BF%displacement) return
+    if (B%sideL) BF%bndFL%U = BF%bndFL%U+dt*BF%bndFL%DU
+    if (B%sideR) BF%bndFR%U = BF%bndFR%U+dt*BF%bndFR%DU
+    if (B%sideB) BF%bndFB%U = BF%bndFB%U+dt*BF%bndFB%DU
+    if (B%sideT) BF%bndFT%U = BF%bndFT%U+dt*BF%bndFT%DU
 
-    if (B%sideL) then
-      BF%bndFL%U = BF%bndFL%U+dt*BF%bndFL%F(:,1:nU)
-      BF%bndFL%U = BF%bndFL%U+dt*BF%bndFL%DU
-    end if
+  end subroutine update_fields_boundary
 
-    if (B%sideR) then
-      BF%bndFR%U = BF%bndFR%U+dt*BF%bndFR%F(:,1:nU)
-      BF%bndFR%U = BF%bndFR%U+dt*BF%bndFR%DU
-    end if
-
-    if (B%sideB) then
-      BF%bndFB%U = BF%bndFB%U+dt*BF%bndFB%F(:,1:nU)
-      BF%bndFB%U = BF%bndFB%U+dt*BF%bndFB%DU
-    end if
-
-    if (B%sideT) then
-      BF%bndFT%U = BF%bndFT%U+dt*BF%bndFT%F(:,1:nU)
-      BF%bndFT%U = BF%bndFT%U+dt*BF%bndFT%DU
-    end if
-
-  end subroutine update_displacement
 
   subroutine ufi2d(lbndFx,lbndFy,lbndDFx,lbndDFy,F,DF,dt,mx,px,my,py)
 
@@ -1276,6 +1047,40 @@ contains
     end do
 
   end subroutine ufi3d
+
+
+  subroutine set_rates_displacement(C,F)
+
+    use mpi_routines2d, only : cartesian
+
+    implicit none
+
+    type(cartesian),intent(in) :: C
+    type(fields_type),intent(inout) :: F
+
+    ! DU = DU+F(1:nU)
+    if (F%displacement) &
+         call ufi3d(C%mx,C%my,1,C%mbx,C%mby,1,F%DU,F%F,1d0,C%mx,C%px,C%my,C%py,1,F%nU)
+
+  end subroutine set_rates_displacement
+
+
+  subroutine set_rates_boundary(B,BF,nU)
+
+    use grid, only : block_grid
+
+    implicit none
+
+    type(block_grid),intent(in) :: B
+    type(block_fields),intent(inout) :: BF
+    integer,intent(in) :: nU
+
+    if (B%sideL) BF%bndFL%DU = BF%bndFL%DU+BF%bndFL%F(:,1:nU)
+    if (B%sideR) BF%bndFR%DU = BF%bndFR%DU+BF%bndFR%F(:,1:nU)
+    if (B%sideB) BF%bndFB%DU = BF%bndFB%DU+BF%bndFB%F(:,1:nU)
+    if (B%sideT) BF%bndFT%DU = BF%bndFT%DU+BF%bndFT%F(:,1:nU)
+
+  end subroutine set_rates_boundary
 
 
   subroutine exchange_fields(C,F)
@@ -1358,1025 +1163,6 @@ contains
   end subroutine rotate_fields_nt2xy_mode2
 
 
-  function bessel(x,y,t,side,field) result(F)
-
-    use ifport ! for Intel Fortran compiler
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    integer,intent(in) :: side
-    character(*),intent(in) :: field
-    real :: F
-
-    real :: r,J,dJdr,drdx,drdy,F0
-    real,parameter :: vz0=1d0,syz0=20d0
-
-    r = sqrt(x**2+y**2)
-
-    J = dbesj0(r)
-    dJdr = -dbesj1(r)
-
-    if (r<epsilon(r)) then
-
-       select case(field)
-       case('vz')
-          F0 = J*cos(t)
-          F = (vz0+F0)-0.5d0*besselA*F0
-          if (side==1) F = -F
-       case('V')
-          F0 = J*cos(t)
-          F = 2d0*(vz0+F0)-besselA*F0
-       case('sxz')
-          F = 0d0
-       case('syz','S')
-          F = syz0
-       end select
-
-    else
-
-       select case(field)
-       case('vz')
-          F0 = J*cos(t)
-          F = (vz0+F0)-0.5d0*besselA*F0
-          if (side==1) F = -F
-       case('V')
-          F0 = J*cos(t)
-          F = 2d0*(vz0+F0)-besselA*F0
-       case('sxz')
-          drdx = x/r
-          F0 = drdx*dJdr*sin(t)
-          F = (1d0-0.5d0*besselA)*F0
-          if (side==1) F = -F
-       case('syz')
-          drdy = y/r
-          F0 = drdy*dJdr*sin(t)
-          F = (1d0-0.5d0*besselA)*F0
-          if (side==1) F = -F
-          F = F+syz0
-       case('S')
-          F = syz0
-       end select
-
-    end if
-
-  end function bessel
-
-
-  function inplane_bessel(x,y,t,M,field) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-    use io, only : error
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    character(*),intent(in) :: field
-    type(block_material),intent(in) :: M
-    real :: F
-
-    real :: r,r_x,r_y,r_xy
-    real :: rp,rp_x,rp_y
-    real :: J0p,J1p,J2p
-    real :: ftp,ftp_t
-    real :: kp,kcp
-    real :: rs,rs_x,rs_y
-    real :: J0s,J1s,J2s
-    real :: fts,fts_t
-    real :: ks,kcs
-    real :: ux,uy,ux_x,ux_y,uy_x,uy_y
-    real :: pi
-
-    pi= 4d0 * datan(1d0)
-    kp = 20d0*pi
-    ks = 10d0*pi
-
-    kcp = kp/M%cp
-    kcs = ks/M%cs
-
-    F = 1d40
-
-    r = sqrt(x**2+y**2)
-    if (r<epsilon(r)) then
-      r = 0d0
-
-      r_x = 0d0
-      r_y = 0d0
-    else
-      r_x = x / r
-      r_y = y / r
-    end if
-
-    ! P-wave
-    rp     = kcp*r
-    rp_x   = kcp*r_x
-    rp_y   = kcp*r_y
-
-    J0p   = dbesjn(0,rp)
-    J1p   = dbesjn(1,rp)
-    J2p   = dbesjn(2,rp)
-    ftp    = sin(kp*t)
-    ftp_t  = kp*cos(kp*t)
-
-    ! S-wave
-    rs     = kcs*r
-    rs_x   = kcs*r_x
-    rs_y   = kcs*r_y
-
-    J0s   = dbesjn(0,rs)
-    J1s   = dbesjn(1,rs)
-    J2s   = dbesjn(2,rs)
-    fts    = sin(ks*t)
-    fts_t  = ks*cos(ks*t)
-
-    select case(field)
-    case('vx')
-      F = -ftp_t * rp_x * J1p - fts_t * rs_y * J1s
-    case('vy')
-      F = -ftp_t * rp_y * J1p + fts_t * rs_x * J1s
-    case('sxx','syy')
-      ux_x = -ftp*0.5d0*kcp**2
-      uy_y = -ftp*0.5d0*kcp**2
-      if (r>epsilon(r)) then
-        ux_x = ftp*(kcp*(x**2-y**2)*J1p - kcp**2*x**2*r*J0p)/r**3 + fts*kcs**2*x*y*J2s/r**2
-        uy_y = ftp*(kcp*(y**2-x**2)*J1p - kcp**2*y**2*r*J0p)/r**3 - fts*kcs**2*x*y*J2s/r**2
-      end if
-      select case(field)
-      case('sxx')
-        F = (M%lambda+2d0*M%G)*ux_x + M%lambda*uy_y
-      case('syy')
-        F = M%lambda*ux_x + (M%lambda+2d0*M%G)*uy_y
-      end select
-    case('sxy')
-      ux_x = -fts*0.5d0*kcs**2
-      uy_y =  fts*0.5d0*kcs**2
-      if (r>epsilon(r)) then
-        ux_y = ftp*kcp**2*x*y*J2p/r**2 + fts*(kcs*(y**2-x**2)*J1s - kcs**2*y**2*r*J0s)/r**3
-        uy_x = ftp*kcp**2*x*y*J2p/r**2 - fts*(kcs*(x**2-y**2)*J1s - kcs**2*x**2*r*J0s)/r**3
-      end if
-
-      F = M%G*(ux_y+uy_x)
-    case('szz')
-      F = 0d0
-    end select
-
-  end function inplane_bessel
-
-  function inplane_fault_mms(x,y,t,iblock,field) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-    use io, only : error
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    integer,intent(in) :: iblock
-    character(*),intent(in) :: field
-    real :: F
-
-    real :: ftp,ftp_t,ftp_tt
-    real :: kp,kcp
-
-    real :: vx  ,vy
-    real :: vx_t,vy_t
-    real :: vx_x,vy_x
-    real :: vx_y,vy_y
-
-    real :: v, v_x, v_y, v_t
-
-    real :: nx  ,ny
-    real :: nx_x,ny_x
-    real :: nx_y,ny_y
-
-    real :: mx  ,my
-    real :: mx_x,my_x
-    real :: mx_y,my_y
-
-    real :: sxx  ,syy  ,sxy  ,szz
-    real :: sxx_t,syy_t,sxy_t,szz_t
-    real :: sxx_x,syy_x,sxy_x
-    real :: sxx_y,syy_y,sxy_y
-
-    real :: pi
-
-    real :: G = 32d0, cs = 3d0, cp = 5d0, rho, lambda
-    rho = G/cs**2
-    lambda = rho*cp**2 - 2d0*G
-
-    F = mms_sin(x,y,t,iblock,field)
-    return
-
-    pi = 4d0 * datan(1d0)
-
-
-    kp = 10d0*pi
-    kcp = kp/cp
-
-    ftp    =       sin(kp*t)/kp
-    ftp_t  =    kp*cos(kp*t)/kp
-    ftp_tt =-kp**2*sin(kp*t)/kp
-
-    szz   = 0d0
-    szz_t = 0d0
-
-    sxx    =     ftp  *sin(kcp*x)*sin(kcp*y) - 126d0
-    sxx_t  =     ftp_t*sin(kcp*x)*sin(kcp*y)
-    sxx_x  = kcp*ftp  *cos(kcp*x)*sin(kcp*y)
-    sxx_y  = kcp*ftp  *sin(kcp*x)*cos(kcp*y)
-
-    syy    =     ftp  *sin(kcp*x)*sin(kcp*y) - 126d0
-    syy_t  =     ftp_t*sin(kcp*x)*sin(kcp*y)
-    syy_x  = kcp*ftp  *cos(kcp*x)*sin(kcp*y)
-    syy_y  = kcp*ftp  *sin(kcp*x)*cos(kcp*y)
-
-    sxy    =     ftp  *sin(kcp*x)*sin(kcp*y) + 0.6*126d0
-    sxy_t  =     ftp_t*sin(kcp*x)*sin(kcp*y)
-    sxy_x  = kcp*ftp  *cos(kcp*x)*sin(kcp*y)
-    sxy_y  = kcp*ftp  *sin(kcp*x)*cos(kcp*y)
-
-    ! WARNING: This must match the coordinate transform!!!!!
-    ! nx =  pi*cos(pi*x)
-    ! ny = -1d0
-
-    ! nx_x = -pi**2*sin(pi*x)
-    ! ny_x = 0d0
-
-    ! nx_y = 0d0
-    ! ny_y = 0d0
-    nx =  pi*cos(pi*x) / sqrt(10d0**2 + (pi*cos(pi*x))**2)
-    ny =         -10d0 / sqrt(10d0**2 + (pi*cos(pi*x))**2)
-
-    nx_x = -10d0**2*pi**2*sin(    pi*x) / sqrt(10d0**2 + (pi*cos(pi*x))**2)**3
-    ny_x =     -5d0*pi**3*sin(2d0*pi*x) / sqrt(10d0**2 + (pi*cos(pi*x))**2)**3
-
-    nx_y = 0d0
-    ny_y = 0d0
-
-    mx =  ny
-    my = -nx
-
-    mx_x =  ny_x
-    my_x = -nx_x
-
-    mx_y =  ny_y
-    my_y = -nx_y
-
-    v   = (3d0-2d0*iblock)*    (ftp_t *sin(kcp*x)*sin(kcp*y) - 1.1d0)
-    v_t = (3d0-2d0*iblock)*    (ftp_tt*sin(kcp*x)*sin(kcp*y))
-    v_x = (3d0-2d0*iblock)*kcp*(ftp_t *cos(kcp*x)*sin(kcp*y))
-    v_y = (3d0-2d0*iblock)*kcp*(ftp_t *sin(kcp*x)*cos(kcp*y))
-
-    vx   = -  v*ny
-    vx_t = -v_t*ny
-    vx_x = -v_x*ny - v*ny_x
-    vx_y = -v_y*ny - v*ny_y
-
-    vy   = v  *nx
-    vy_t = v_t*nx
-    vy_x = v_x*nx + v*nx_x
-    vy_y = v_y*nx + v*nx_y
-
-    select case(field)
-    case default
-       call error('Invalid field (' // trim(field) // ')')
-    case('V')
-      F = 2d0*(mx*vx + my*vy)
-    case('N')
-      F = -(nx*sxx*nx + ny*syy*ny + 2d0*nx*ny*sxy)
-    case('S')
-      F = nx*sxx*mx + ny*syy*my + (nx*my + ny*mx)*sxy
-    case('Vt')
-      F = 2d0*(mx*vx_t + my*vy_t)
-    case('Nt')
-      F = -(nx*sxx_t*nx + ny*syy_t*ny + 2d0*nx*ny*sxy_t)
-    case('St')
-      F = nx*sxx_t*mx + ny*syy_t*my + (nx*my + ny*mx)*sxy_t
-    case('vx')
-      F = vx
-    case('vy')
-      F = vy
-    case('s_vx')
-      F = vx_t-(sxx_x+sxy_y)/rho
-    case('s_vy')
-      F = vy_t-(sxy_x+syy_y)/rho
-    case('sxx')
-      F = sxx
-    case('syy')
-      F = syy
-    case('sxy')
-      F = sxy
-    case('szz')
-      F = szz
-    case('s_sxx')
-      F = sxx_t-((lambda+2d0*G)*vx_x + lambda*vy_y)
-    case('s_syy')
-      F = syy_t-(lambda*vx_x + (lambda+2d0*G)*vy_y)
-    case('s_sxy')
-      F = sxy_t-(G*(vy_x+vx_y))
-    case('s_szz')
-      F = szz_t-(lambda*(vx_x+vy_y))
-    end select
-
-  end function inplane_fault_mms
-
-
-  function inplane_fault_mms_old(x,y,t,M,field) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-    use io, only : error
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    character(*),intent(in) :: field
-    type(block_material),intent(in) :: M
-    real :: F
-
-    real :: r,r_x,r_y,r_xy,r_xx,r_yy
-    real :: rp,rp_x,rp_y
-    real :: ftp,ftp_t,ftp_tt
-    real :: gp,gp_r,gp_rr
-    real :: gp_x,gp_y,gp_xx,gp_yy,gp_xy
-    real :: kp,kcp
-    real :: ux,uy
-    real :: ux_t,uy_t
-    real :: ux_x,uy_x
-    real :: ux_y,uy_y
-    real :: ux_xx,uy_xx
-    real :: ux_xy,uy_xy
-    real :: ux_yy,uy_yy
-    real :: ux_tt,uy_tt
-    real :: pi
-
-    pi = 4d0 * datan(1d0)
-    r = sqrt(x**2+y**2)
-
-    r_x = x / r
-    r_y = y / r
-
-    r_xx = y**2 / r**3
-    r_yy = x**2 / r**3
-    r_xy = x*y  / r**3
-
-    kp = 10d0*pi
-    kcp = kp/M%cp
-
-    ftp    =       sin(kp*t)
-    ftp_t  =    kp*cos(kp*t)
-    ftp_tt =-kp**2*sin(kp*t)
-
-    gp    =        cos(kcp*r)
-    gp_r  =   -kcp*sin(kcp*r)
-    gp_rr =-kcp**2*cos(kcp*r)
-
-    gp_x = gp_r*r_x
-    gp_y = gp_r*r_y
-
-    gp_xx = gp_rr*r_x**2  + gp_r*r_xx
-    gp_yy = gp_rr*r_y**2  + gp_r*r_yy
-    gp_xy = gp_rr*r_y*r_x + gp_r*r_xy
-
-    if(r < epsilon(r)) then
-      gp_x = 0d0
-      gp_y = 0d0
-
-      gp_xx = -kcp**2
-      gp_yy = -kcp**2
-      gp_xy = 0d0
-    end if
-    
-    gp = x**2 + y**2
-    gp_x = 2d0*x
-    gp_xx = 2d0
-    gp_y = 2d0*y
-    gp_yy = 2d0
-    gp_xy = 0d0
-    
-    gp    =        sin(kcp*x)*sin(kcp*y)
-    gp_x  =    kcp*cos(kcp*x)*sin(kcp*y)
-    gp_xx =-kcp**2*sin(kcp*x)*sin(kcp*y)
-    gp_y  =    kcp*sin(kcp*x)*cos(kcp*y)
-    gp_yy =-kcp**2*sin(kcp*x)*sin(kcp*y)
-    gp_xy = kcp**2*cos(kcp*x)*cos(kcp*y)
-    
-    ux    = ftp   *gp
-    ux_t  = ftp_t *gp
-    ux_tt = ftp_tt*gp
-    ux_x  = ftp   *gp_x
-    ux_y  = ftp   *gp_y
-    ux_xx = ftp   *gp_xx
-    ux_xy = ftp   *gp_xy
-    ux_yy = ftp   *gp_yy
-    
-    uy    = ftp   *gp
-    uy_t  = ftp_t *gp
-    uy_tt = ftp_tt*gp
-    uy_x  = ftp   *gp_x
-    uy_y  = ftp   *gp_y
-    uy_xx = ftp   *gp_xx
-    uy_xy = ftp   *gp_xy
-    uy_yy = ftp   *gp_yy
-    
-    select case(field)
-    case('vx')
-      F = ux_t
-    case('vy')
-      F = uy_t
-    case('s_vx')
-      F = ux_tt-(&
-        (M%lambda+2d0*M%G)*ux_xx + M%lambda*uy_xy&
-        +M%G*(ux_yy+uy_xy)&
-        )/M%rho
-    case('s_vy')
-      F = uy_tt-(&
-        M%G*(ux_xy+uy_xx)&
-        +M%lambda*ux_xy + (M%lambda+2d0*M%G)*uy_yy&
-        )/M%rho
-    case('sxx')
-      F = (M%lambda+2d0*M%G)*ux_x + M%lambda*uy_y
-    case('syy')
-      F = M%lambda*ux_x + (M%lambda+2d0*M%G)*uy_y
-    case('sxy')
-      F = M%G*(ux_y+uy_x)
-    case('szz','s_sxx','s_syy','s_sxy','s_szz')
-      F = 0d0
-    end select
-
-  end function inplane_fault_mms_old
-
-  function mms_sin_old(x,y,t,side,field,M) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-    use io, only : error
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    integer,intent(in) :: side
-    character(*),intent(in) :: field
-    type(block_material),intent(in),optional :: M
-    real :: F, F2
-
-    real :: syy,sxy,sxx,vx,vy,g,gp,pi,mv
-    real :: syy0,sxy0,sxx0,vx0,vy0
-    real :: vx_t,vx_x,vx_y
-    real :: vy_t,vy_x,vy_y
-    real :: syy_t,syy_x,syy_y
-    real :: sxy_t,sxy_x,sxy_y
-    real :: sxx_t,sxx_x,sxx_y
-    real :: szz_t
-    real :: nx,ny,mx,my
-    real :: ft,ft_t
-    real :: nx_x,ny_x,mx_x,my_x,gp_x
-    real :: nx_y,ny_y,mx_y,my_y
-    real :: w,kx,ky,mf,kf
-
-    pi = 4d0 * datan(1d0)
-    kx  = 2d0*pi
-    ky  = 2d0*pi
-    mv  = 2d0
-    w  = (2d0/0.46d0)*pi
-    ft = cos(w*t)
-    ft_t = -w*sin(w*t)
-
-    ! WARNING: This must match the coordinate transform!!!!!
-    mf   = 0.1d0
-    kf   = 1d0*pi
-    g    = mf*sin(kf*x)
-    gp   = mf*kf*cos(kf*x)
-    gp_x =-mf*(kf**2)*sin(kf*x)
-    ! g = 0d0
-    ! gp = 0d0
-    ! gp_x = 0d0
-
-    nx =  gp/sqrt(1+gp**2)
-    ny = -1 /sqrt(1+gp**2)
-    mx =  ny
-    my = -nx
-
-    ! need to be careful since slip and sxy must have the same sign at the
-    ! fault for the friction law
-    vx   = mv*(3d0-2d0*side)*   1d0*cos(kx*x)*cos(ky*y)
-    vx_x =-mv*(3d0-2d0*side)*kx*1d0*sin(kx*x)*cos(ky*y)
-    vx_y =-mv*(3d0-2d0*side)*ky*1d0*cos(kx*x)*sin(ky*y)
-
-    ! vx   =   cos(kx*x)*cos(ky*y)
-    ! vx_x =-kx*sin(kx*x)*cos(ky*y)
-    ! vx_y =-ky*cos(kx*x)*sin(ky*y)
-
-    vy   =    1d0*cos(kx*x)*cos(ky*y)
-    vy_x =-kx*1d0*sin(kx*x)*cos(ky*y)
-    vy_y =-ky*1d0*cos(kx*x)*sin(ky*y)
-
-    syy   =   -50d0*cos(kx*x)*cos(ky*y)
-    syy_x = kx*50d0*sin(kx*x)*cos(ky*y)
-    syy_y = ky*50d0*cos(kx*x)*sin(ky*y)
-
-    sxy   =    20d0*cos(kx*x)*cos(ky*y)
-    sxy_x =-kx*20d0*sin(kx*x)*cos(ky*y)
-    sxy_y =-ky*20d0*cos(kx*x)*sin(ky*y)
-
-    sxx   = (2d0*side-3d0)*   50d0*cos(kx*x)*cos(ky*y)
-    sxx_x =-(2d0*side-3d0)*kx*50d0*sin(kx*x)*cos(ky*y)
-    sxx_y =-(2d0*side-3d0)*ky*50d0*cos(kx*x)*sin(ky*y)
-
-    ! sxx   =   cos(kx*x)*cos(ky*y)
-    ! sxx_x =-kx*sin(kx*x)*cos(ky*y)
-    ! sxx_y =-ky*cos(kx*x)*sin(ky*y)
-
-    vx0  = (mv+1)*(3d0-2d0*side)
-    vy0  = 0d0
-    syy0 = -126d0
-    sxy0 = -syy0*0.6d0
-    sxx0 = 0d0
-
-    ! sxy = 0d0
-    ! sxx = 0d0
-    ! syy = 0d0
-    ! vx = 0d0
-    ! vy = 0d0
-
-    select case(field)
-    case('szz')
-        F = 0d0
-        return
-    case('vx','vy','V')
-        vx = ft*vx + vx0
-        vy = ft*vy + vy0
-        select case(field)
-        case('V')
-            F = 2d0*vx
-            return
-        case('vx')
-            F = ny*vx-my*vy
-            return
-        case('vy')
-            F = mx*vy-nx*vx
-            return
-        end select
-    case('sxx','syy','sxy','N','S')
-        syy = ft*syy + syy0
-        sxx = ft*sxx + sxx0
-        sxy = ft*sxy + sxy0
-        select case(field)
-        case('S')
-            F = sxy
-            return
-        case('N')
-            F =-syy
-            return
-        case('sxx')
-            F = syy*my**2+sxx*ny**2-2d0*sxy*my*ny
-            return
-        case('syy')
-            F = syy*mx**2+sxx*nx**2-2d0*sxy*mx*nx
-            return
-        case('sxy')
-            F =-syy*my*mx-sxx*ny*nx+sxy*(ny*mx+nx*my)
-            return
-        end select
-    case('Vt')
-         F = 2d0*vx*ft_t
-         return
-    case('St')
-         F = sxy*ft_t
-         return
-    case('Nt')
-         F =  -syy*ft_t
-         return
-    case('s_vx','s_vy')
-        ! need to be careful since slip and sxy must have the same sign at the
-        ! fault for the friction law
-
-        ! Need the time derivatives of velocity
-        vx_t = ft_t*vx
-        vy_t = ft_t*vy
-
-        ! For the stresses we need both parts
-        syy = ft*syy + syy0
-        sxx = ft*sxx + sxx0
-        sxy = ft*sxy + sxy0
-
-        syy_x = syy_x*ft
-        sxy_x = sxy_x*ft
-        sxx_x = sxx_x*ft
-
-        syy_y = syy_y*ft
-        sxy_y = sxy_y*ft
-        sxx_y = sxx_y*ft
-
-        ! We will also need the derivatives of the normal vectors
-        nx_x =     gp_x/sqrt((1+gp**2)**3)
-        ny_x =  gp*gp_x/sqrt((1+gp**2)**3)
-        mx_x =  ny_x
-        my_x = -nx_x
-
-        nx_y = 0d0
-        ny_y = 0d0
-        mx_y =  ny_y
-        my_y = -nx_y
-
-        select case(field)
-        case('s_vx')
-            ! vx_t - (1/rho)*(sxx_x+sxy_y)
-            vx_t  = ny*vx_t-my*vy_t
-            sxx_x = syy_x*my**2+sxx_x*ny**2-2*sxy_x*my*ny &
-                  + 2d0*syy*my*my_x+2d0*sxx*ny*ny_x-2*sxy*(my_x*ny+my*ny_x)
-            sxy_y = -syy_y*my*mx-sxx_y*ny*nx+sxy_y*(ny*mx+nx*my) &
-                  -syy*(my_y*mx+my*mx_y)-sxx*(ny_y*nx+ny*nx_y)+sxy*(ny_y*mx+ny*mx_y+nx_y*my+nx*my_y)
-            F = vx_t - (1d0/M%rho)*(sxx_x+sxy_y)
-            return
-        case('s_vy')
-            ! vy_t - (1/rho)*(sxy_x+syy_y)
-            vy_t = mx*vy_t-nx*vx_t
-            sxy_x = -syy_x*my*mx-sxx_x*ny*nx+sxy_x*(ny*mx+nx*my) &
-                  -syy*(my_x*mx+my*mx_x)-sxx*(ny_x*nx+ny*nx_x)+sxy*(ny_x*mx+ny*mx_x+nx_x*my+nx*my_x)
-            syy_y = syy_y*mx**2+sxx_y*nx**2-2*sxy_y*mx*nx &
-                  + 2d0*syy*mx*mx_y+2d0*sxx*nx*nx_y-2*sxy*(mx_y*nx+mx*nx_y)
-            F = vy_t - (1d0/M%rho)*(sxy_x+syy_y)
-            return
-        end select
-    case('s_sxx','s_syy','s_sxy','s_szz')
-        ! Need the time derivatives of stresses
-        syy_t = ft_t*syy
-        sxy_t = ft_t*sxy
-        sxx_t = ft_t*sxx
-
-        ! For the velocities we need both parts
-        vx = ft*vx + vx0
-        vy = ft*vy + vy0
-
-        vx_x = vx_x*ft
-        vy_x = vy_x*ft
-
-        vx_y = vx_y*ft
-        vy_y = vy_y*ft
-
-        ! We will also need the derivatives of the normal vectors
-        nx_x =     gp_x/sqrt((1+gp**2)**3)
-        ny_x =  gp*gp_x/sqrt((1+gp**2)**3)
-        mx_x =  ny_x
-        my_x = -nx_x
-
-        nx_y = 0d0
-        ny_y = 0d0
-        mx_y =  ny_y
-        my_y = -nx_y
-
-        select case(field)
-        case('s_sxx')
-            ! sxx_t - (lam+2*G) vx_x - lam * vy_y
-            sxx_t = syy_t*my**2+sxx_t*ny**2-2*sxy_t*my*ny
-            vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-            vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-            F = sxx_t - (M%lambda+2d0*M%G)*vx_x - M%lambda*vy_y
-            return
-        case('s_syy')
-            ! syy_t - lam * vx_x - (lam+2*G) vy_y
-            vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-            vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-            syy_t = syy_t*mx**2+sxx_t*nx**2-2*sxy_t*mx*nx
-            F = syy_t - M%lambda*vx_x - (M%lambda+2d0*M%G)*vy_y
-            return
-        case('s_sxy')
-            ! sxy_t - G * vy_x + G * vx_y
-            vx_y = ny_y*vx-my_y*vy + ny*vx_y-my*vy_y
-            vy_x = mx_x*vy-nx_x*vx + mx*vy_x-nx*vx_x
-            sxy_t =-syy_t*my*mx-sxx_t*ny*nx+sxy_t*(ny*mx+nx*my)
-            F = sxy_t - M%G*(vy_x+vx_y)
-            return
-        case('s_szz')
-            ! sxx_t - (lam+2*G) vx_x - lam * vy_y
-            szz_t = 0d0
-            vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-            vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-            F = szz_t - M%lambda*vx_x - M%lambda*vy_y
-            return
-        end select
-    end select
-
-       call error('Invalid field (' // trim(field) // ')')
-
-    F = 0
-
-  end function mms_sin_old
-
-  function mms_sin(x,y,t,side,field) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-    use io, only : error
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    integer,intent(in) :: side
-    character(*),intent(in) :: field
-    real :: F, F2
-
-    real :: syy,sxy,sxx,vx,vy,ftp,ftpp,pi,mv
-    real :: vx_t,vx_x,vx_y
-    real :: vy_t,vy_x,vy_y
-    real :: syy_t,syy_x,syy_y
-    real :: sxy_t,sxy_x,sxy_y
-    real :: sxx_t,sxx_x,sxx_y
-    real :: szz_t
-    real :: nx,ny,mx,my
-    real :: ft,ft_t
-    real :: nx_x,ny_x,mx_x,my_x,ftpp_x
-    real :: nx_y,ny_y,mx_y,my_y
-    real :: w,kx,ky,mf,kf
-
-    real :: G = 32d0, cs = 3d0, cp = 5d0, rho, lambda, Zs
-    rho = G/cs**2
-    lambda = rho*cp**2 - 2d0*G
-    Zs = rho*cs
-
-
-    pi = 4d0 * datan(1d0)
-    kx  = 2d0*pi
-    ky  = 2d0*pi
-    mv  = 2d0
-    w  = (4d0/0.46d0)*pi
-    ! w = 10d0*pi
-    ft = cos(w*t)
-    ft_t = -w*sin(w*t)
-
-    ! WARNING: This must match the coordinate transform!!!!!
-    mf   = 0.1d0
-    kf   = 1d0*pi
-    ftp    = mf*sin(kf*x)
-    ftpp   = mf*kf*cos(kf*x)
-    ftpp_x =-mf*(kf**2)*sin(kf*x)
-    ! ftp = 0d0
-    ! ftpp = 0d0
-    ! ftpp_x = 0d0
-
-    nx =  ftpp/sqrt(1d0+ftpp**2)
-    ny = -1d0 /sqrt(1d0+ftpp**2)
-    mx =  ny
-    my = -nx
-
-    ! We will also need the derivatives of the normal vectors
-    nx_x =     ftpp_x/sqrt((1+ftpp**2)**3)
-    ny_x =  ftpp*ftpp_x/sqrt((1+ftpp**2)**3)
-    mx_x =  ny_x
-    my_x = -nx_x
-
-    nx_y = 0d0
-    ny_y = 0d0
-    mx_y =  ny_y
-    my_y = -nx_y
-
-
-    ! need to be careful since slip and sxy must have the same sign at the
-    ! fault for the friction law
-    vx   = mv*(3d0-2d0*side)*   (2d0*12.6/Zs)*cos(kx*x)*cos(ky*y)*ft
-    vx_t = mv*(3d0-2d0*side)*   (2d0*12.6/Zs)*cos(kx*x)*cos(ky*y)*ft_t
-    vx_x =-mv*(3d0-2d0*side)*kx*(2d0*12.6/Zs)*sin(kx*x)*cos(ky*y)*ft
-    vx_y =-mv*(3d0-2d0*side)*ky*(2d0*12.6/Zs)*cos(kx*x)*sin(ky*y)*ft
-
-    vy   =    (2d0*12.6/Zs)*cos(kx*x)*cos(ky*y)*ft
-    vy_t =    (2d0*12.6/Zs)*cos(kx*x)*cos(ky*y)*ft_t
-    vy_x =-kx*(2d0*12.6/Zs)*sin(kx*x)*cos(ky*y)*ft
-    vy_y =-ky*(2d0*12.6/Zs)*cos(kx*x)*sin(ky*y)*ft
-
-    syy   =   -63d0*cos(kx*x)*cos(ky*y)*ft - 126d0
-    syy_t =   -63d0*cos(kx*x)*cos(ky*y)*ft_t
-    syy_x = kx*63d0*sin(kx*x)*cos(ky*y)*ft
-    syy_y = ky*63d0*cos(kx*x)*sin(ky*y)*ft
-
-    sxy   =    0.6d0*126d0*cos(kx*x)*cos(ky*y)*ft
-    sxy_t =    0.6d0*126d0*cos(kx*x)*cos(ky*y)*ft_t
-    sxy_x =-kx*0.6d0*126d0*sin(kx*x)*cos(ky*y)*ft
-    sxy_y =-ky*0.6d0*126d0*cos(kx*x)*sin(ky*y)*ft
-
-    sxx   = (2d0*side-3d0)*   0.6d0*1260*cos(kx*x)*cos(ky*y)*ft
-    sxx_t = (2d0*side-3d0)*   0.6d0*1260*cos(kx*x)*cos(ky*y)*ft_t
-    sxx_x =-(2d0*side-3d0)*kx*0.6d0*1260*sin(kx*x)*cos(ky*y)*ft
-    sxx_y =-(2d0*side-3d0)*ky*0.6d0*1260*cos(kx*x)*sin(ky*y)*ft
-
-    select case(field)
-    case('szz')
-        F = 0d0
-        return
-    case('V')
-        F = 2d0*vx
-        return
-    case('vx')
-        F = ny*vx-my*vy
-        return
-    case('vy')
-        F = mx*vy-nx*vx
-        return
-    case('S')
-      F = sxy
-      return
-    case('N')
-      F =-syy
-      return
-    case('sxx')
-      F = syy*my**2+sxx*ny**2-2d0*sxy*my*ny
-      return
-    case('syy')
-      F = syy*mx**2+sxx*nx**2-2d0*sxy*mx*nx
-      return
-    case('sxy')
-      F =-syy*my*mx-sxx*ny*nx+sxy*(ny*mx+nx*my)
-      return
-    case('Vt')
-         F = 2d0*vx*ft_t
-         return
-    case('St')
-         F = sxy*ft_t
-         return
-    case('Nt')
-         F =  -syy*ft_t
-         return
-    case('s_vx')
-        ! vx_t - (1/rho)*(sxx_x+sxy_y)
-        vx_t  = ny*vx_t-my*vy_t
-        sxx_x = syy_x*my**2+sxx_x*ny**2-2*sxy_x*my*ny &
-              + 2d0*syy*my*my_x+2d0*sxx*ny*ny_x-2*sxy*(my_x*ny+my*ny_x)
-        sxy_y = -syy_y*my*mx-sxx_y*ny*nx+sxy_y*(ny*mx+nx*my) &
-              -syy*(my_y*mx+my*mx_y)-sxx*(ny_y*nx+ny*nx_y)+sxy*(ny_y*mx+ny*mx_y+nx_y*my+nx*my_y)
-        F = vx_t - (1d0/rho)*(sxx_x+sxy_y)
-        return
-    case('s_vy')
-        ! vy_t - (1/rho)*(sxy_x+syy_y)
-        vy_t = mx*vy_t-nx*vx_t
-        sxy_x = -syy_x*my*mx-sxx_x*ny*nx+sxy_x*(ny*mx+nx*my) &
-              -syy*(my_x*mx+my*mx_x)-sxx*(ny_x*nx+ny*nx_x)+sxy*(ny_x*mx+ny*mx_x+nx_x*my+nx*my_x)
-        syy_y = syy_y*mx**2+sxx_y*nx**2-2*sxy_y*mx*nx &
-              + 2d0*syy*mx*mx_y+2d0*sxx*nx*nx_y-2*sxy*(mx_y*nx+mx*nx_y)
-        F = vy_t - (1d0/rho)*(sxy_x+syy_y)
-        return
-    case('s_sxx')
-        ! sxx_t - (lam+2*G) vx_x - lam * vy_y
-        sxx_t = syy_t*my**2+sxx_t*ny**2-2*sxy_t*my*ny
-        vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-        vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-        F = sxx_t - (lambda+2d0*G)*vx_x - lambda*vy_y
-        return
-    case('s_syy')
-        ! syy_t - lam * vx_x - (lam+2*G) vy_y
-        vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-        vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-        syy_t = syy_t*mx**2+sxx_t*nx**2-2*sxy_t*mx*nx
-        F = syy_t - lambda*vx_x - (lambda+2d0*G)*vy_y
-        return
-    case('s_sxy')
-        ! sxy_t - G * vy_x + G * vx_y
-        vx_y = ny_y*vx-my_y*vy + ny*vx_y-my*vy_y
-        vy_x = mx_x*vy-nx_x*vx + mx*vy_x-nx*vx_x
-        sxy_t =-syy_t*my*mx-sxx_t*ny*nx+sxy_t*(ny*mx+nx*my)
-        F = sxy_t - G*(vy_x+vx_y)
-        return
-    case('s_szz')
-        ! sxx_t - (lam+2*G) vx_x - lam * vy_y
-        szz_t = 0d0
-        vx_x = ny_x*vx-my_x*vy + ny*vx_x-my*vy_x
-        vy_y = mx_y*vy-nx_y*vx + mx*vy_y-nx*vx_y
-        F = szz_t - lambda*vx_x - lambda*vy_y
-        return
-    end select
-
-    call error('Invalid field (' // trim(field) // ')')
-
-    F = 0d0
-
-  end function mms_sin
-
-  function mms_simple(x,y,t,side,field,M) result(F)
-
-    use ifport ! for Intel Fortran compiler
-    use material, only : block_material
-
-    implicit none
-
-    real,intent(in) :: x,y,t
-    integer,intent(in) :: side
-    character(*),intent(in) :: field
-    type(block_material),intent(in),optional :: M
-    real :: F
-
-    real :: r2,syy,sxy,sxx,vx,vy,g,gp,pi
-    real :: vx_t,vx_x,vx_y
-    real :: vy_t,vy_x,vy_y
-    real :: syy_t,syy_x,syy_y
-    real :: sxy_t,sxy_x,sxy_y
-    real :: sxx_t,sxx_x,sxx_y
-    real :: w,k
-
-    ! WARNING: This must match the coordinate transform!!!!!
-    pi = 4d0 * datan(1d0)
-    w = 2d0*pi
-    k = 4d0*pi
-
-    select case(field)
-    case('vx','vy','V')
-        ! need to be careful since slip and sxy must have the same sign at the
-        ! fault for the friction law
-        vx = cos(w*t)*cos(k*x)*cos(k*y)
-        vy = cos(w*t)*cos(k*x)*cos(k*y)
-        select case(field)
-        case('V')
-            F = 2*vx
-            return
-        case('vx')
-            F = vx
-            return
-        case('vy')
-            F = vy
-            return
-        end select
-    case('sxx','syy','sxy','N','S')
-        syy = cos(w*t)*cos(k*x)*cos(k*y)
-        sxy = cos(w*t)*cos(k*x)*cos(k*y)
-        sxx = cos(w*t)*cos(k*x)*cos(k*y)
-        select case(field)
-        case('S')
-            F = sxy
-            return
-        case('N')
-            F = syy
-            return
-        case('sxx')
-            F = sxx
-            return
-        case('syy')
-            F = syy
-            return
-        case('sxy')
-            F = sxy
-            return
-        end select
-    case('s_vx','s_vy')
-        ! need to be careful since slip and sxy must have the same sign at the
-        ! fault for the friction law
-
-        ! Need the time derivatives of velocity
-        vx_t = -w*sin(w*t)*cos(k*x)*cos(k*y)
-        vy_t = -w*sin(w*t)*cos(k*x)*cos(k*y)
-
-        ! For the stresses we need both parts
-        syy_x = -k*cos(w*t)*sin(k*x)*cos(k*y)
-        sxy_x = -k*cos(w*t)*sin(k*x)*cos(k*y)
-        sxx_x = -k*cos(w*t)*sin(k*x)*cos(k*y)
-
-        syy_y = -k*cos(w*t)*cos(k*x)*sin(k*y)
-        sxy_y = -k*cos(w*t)*cos(k*x)*sin(k*y)
-        sxx_y = -k*cos(w*t)*cos(k*x)*sin(k*y)
-
-        select case(field)
-        case('s_vx')
-            ! vx_t - (1/rho)*(sxx_x+sxy_y)
-            F = vx_t - (1/M%rho)*(sxx_x+sxy_y)
-            return
-        case('s_vy')
-            ! vy_t - (1/rho)*(sxy_x+syy_y)
-            F = vy_t - (1/M%rho)*(sxy_x+syy_y)
-            return
-        end select
-
-    case('s_sxx','s_syy','s_sxy')
-        ! Need the time derivatives of stresses
-        syy_t = -w*sin(w*t)*cos(k*x)*cos(k*y)
-        sxy_t = -w*sin(w*t)*cos(k*x)*cos(k*y)
-        sxx_t = -w*sin(w*t)*cos(k*x)*cos(k*y)
-
-        ! For the velocities we need both parts
-        vx_x = -k*cos(w*t)*sin(k*x)*cos(k*y)
-        vy_x = -k*cos(w*t)*sin(k*x)*cos(k*y)
-
-        vx_y = -k*cos(w*t)*cos(k*x)*sin(k*y)
-        vy_y = -k*cos(w*t)*cos(k*x)*sin(k*y)
-
-        select case(field)
-        ! For the velocities we will use the chain rule and need all of these
-        case('s_sxx')
-            ! sxx_t - (lam+2*G) vx_x - lam * vy_y
-            F = sxx_t - (M%lambda+2*M%G)*vx_x - M%lambda*vy_y
-            return
-        case('s_syy')
-            ! syy_t - lam * vx_x - (lam+2*G) vy_y
-            F = syy_t - (M%lambda+2*M%G)*vy_y - M%lambda*vx_x
-            return
-        case('s_sxy')
-            ! sxy_t - G * vy_x + G * vx_y
-            F = sxy_t - M%G*(vy_x+vx_y)
-            return
-        end select
-    end select
-
-    F = 0
-
-  end function mms_simple
-
   subroutine scale_rates_displacement(B,BF,A)
 
     use grid, only : block_grid
@@ -2385,13 +1171,12 @@ contains
     type(block_fields),intent(inout) :: BF
     real,intent(in) :: A
 
-    if (.not.BF%displacement) return
-
     if (B%sideL) BF%bndFL%DU = A*BF%bndFL%DU
     if (B%sideR) BF%bndFR%DU = A*BF%bndFR%DU
     if (B%sideB) BF%bndFB%DU = A*BF%bndFB%DU
     if (B%sideT) BF%bndFT%DU = A*BF%bndFT%DU
 
   end subroutine scale_rates_displacement
+
 
 end module fields
