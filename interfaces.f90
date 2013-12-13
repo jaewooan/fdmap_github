@@ -1,4 +1,4 @@
-module fault
+module interfaces
 
   implicit none
 
@@ -493,4 +493,4 @@ contains
   end subroutine couple_mode2
 
 
-end module fault
+end module interfaces
