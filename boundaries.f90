@@ -12,7 +12,7 @@ module boundaries
   end type block_boundaries
 
   type :: iface_type
-     logical :: skip,share,process_m,process_p,output_process,energy_balance
+     logical :: skip,share,process_m,process_p,output_process
      character(24) :: coupling
      character(1) :: direction
      integer :: iblockm,iblockp,m,p,mg,pg,mb,pb, &
@@ -20,7 +20,7 @@ module boundaries
      type(fr_type) :: FR
      type(tp_type) :: TP
      type(er_type) :: ER
-     real,dimension(:),allocatable :: x,y,dl,E,DE
+     real,dimension(:),allocatable :: x,y,dl
      real,dimension(:,:),allocatable :: nhat
   end type iface_type
 
@@ -28,7 +28,7 @@ module boundaries
 contains
 
 
-  subroutine init_iface(iface,I,refine,energy_balance,input)
+  subroutine init_iface(iface,I,input)
 
     use io, only : error,seek_to_string
 
@@ -36,8 +36,6 @@ contains
 
     integer,intent(in) :: iface,input
     type(iface_type),intent(out) :: I
-    real,intent(in) :: refine
-    logical,intent(in) :: energy_balance
 
     integer :: stat,iblockm,iblockp,mg,pg
     character(24) :: coupling
@@ -64,12 +62,10 @@ contains
     I%mg = mg
     I%pg = pg
 
-    I%energy_balance = energy_balance
-
   end subroutine init_iface
 
 
-  subroutine init_iface_blocks(iface,I,Gm,Gp,C,refine,input,echo)
+  subroutine init_iface_blocks(iface,I,Gm,Gp,C,refine)
 
     use grid, only : block_grid
     use mpi_routines2d, only : cartesian
@@ -78,7 +74,7 @@ contains
 
     implicit none
 
-    integer,intent(in) :: iface,input,echo
+    integer,intent(in) :: iface
     type(iface_type),intent(inout) :: I
     type(block_grid),intent(in) :: Gm,Gp
     type(cartesian),intent(in) :: C
@@ -197,14 +193,6 @@ contains
        allocate(I%x   (I%m:I%p),I%y   (I%m:I%p))
        allocate(I%dl  (I%m:I%p),I%nhat(I%m:I%p,2))
 
-       if (I%energy_balance) then
-          allocate(I%E   (I%m:I%p),I%DE  (I%m:I%p))
-          I%E    = 0d0
-          I%DE   = 1d40
-       end if
-
-       ! huge values for debugging purposes
-       
        I%x    = 1d40
        I%y    = 1d40
        I%nhat = 1d40
@@ -289,8 +277,6 @@ contains
     if (allocated(I%y   )) deallocate(I%y   )
     if (allocated(I%nhat)) deallocate(I%nhat)
     if (allocated(I%dl  )) deallocate(I%dl  )
-    if (allocated(I%E   )) deallocate(I%E   )
-    if (allocated(I%DE  )) deallocate(I%DE  )
 
     call destroy_friction( I%FR)
     call destroy_thermpres(I%TP)
@@ -350,19 +336,8 @@ contains
        call MPI_Barrier(MPI_COMM_WORLD,ierr)
        
        if (io_process) then
-
-          select case(operation)
-          case('read')
-             if (I%energy_balance) call read_file_distributed(fh,I%E)
-             if (I%energy_balance) call read_file_distributed(fh,I%DE)
-          case('write')
-             if (I%energy_balance) call write_file_distributed(fh,I%E)
-             if (I%energy_balance) call write_file_distributed(fh,I%DE)
-          end select
-       
           if (I%coupling=='friction') call checkpoint_friction(fh,operation,I%FR)
           call checkpoint_erupt(fh,operation,I%ER)
-
        end if
 
        if (I%coupling=='friction') call checkpoint_thermpres(operation,name, &
@@ -394,8 +369,6 @@ contains
 
     if (I%skip) return
 
-    if (I%energy_balance) I%DE = A*I%DE
-
     select case(I%coupling)
     case('friction')
        call scale_rates_friction(I%FR,A)
@@ -417,17 +390,9 @@ contains
 
     if (I%skip) return
 
-    if (I%energy_balance) I%E = I%E+dt*I%DE
-
     select case(I%coupling)
     case('friction')
-      select case(I%direction)
-      case('x')
-        call update_fields_friction(I%FR,dt)
-      case('y')                                     
-        call update_fields_friction(I%FR,dt)
-      end select
-
+       call update_fields_friction(I%FR,dt)
     case('eruption')
        !JK call update_fields_erupt(I%ER,dt,I%FR%DDn(I%m:I%p))
     end select
@@ -583,17 +548,10 @@ contains
 
     if (bc=='none') return
 
-    if (allocated(bndF%DE)) then
-       do i = m,p
-          call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
-               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock,bndF%DE(i))
-       end do
-    else
-       do i = m,p
-          call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
-               bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock)
-       end do
-    end if
+    do i = m,p
+       call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
+            bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock,bndF%DE(i))
+    end do
     
   end subroutine apply_bc_side
 
@@ -606,27 +564,17 @@ contains
     !      then overwritten with hat variables)
     ! F0 = initial fields
 
-    real,intent(inout) :: F(:)
+    real,intent(inout) :: F(:),DE
     real,intent(in) :: F0(:),U(:),rhog,x,y,normal(2),M(3),t
     character(*),intent(in) :: bc
     integer,intent(in) :: mode,iblock
-    real,intent(inout),optional :: DE
 
-    if (present(DE)) then
-       select case(mode)
-       case(2)
-          call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock,DE)
-       case(3)
-          call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock,DE)
-       end select
-    else
-       select case(mode)
-       case(2)
-          call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock)
-       case(3)
-          call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock)
-       end select
-    end if
+    select case(mode)
+    case(2)
+       call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock,DE)
+    case(3)
+       call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock,DE)
+    end select
 
   end subroutine set_bc
 
@@ -639,11 +587,10 @@ contains
 
     implicit none
 
-    real,intent(inout) :: F(3)
+    real,intent(inout) :: F(3),DE
     real,intent(in) :: F0(3),normal(2),Zs,x,y,t
     character(*),intent(in) :: bc
     integer,intent(in) :: iblock
-    real,intent(inout),optional :: DE
 
     real :: Zsi,vz,snz,vzFD,snzFD,stzFD,vzEX,snzEX,stzEX,Fe(3)
 
@@ -659,7 +606,7 @@ contains
        vz = bessel(x,y,t,iblock,'vz')
        snz = snzFD-Zs*(vzFD-vz)
        call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       if (present(DE)) DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
+       call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
        return
     case('bessel-w')
        call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
@@ -670,7 +617,7 @@ contains
        vz = 0.5d0*(vzEX+vzFD+Zsi*(snzEX-snzFD))
        snz = 0.5d0*(snzEX+snzFD+Zs*(vzEX-vzFD))
        call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       if (present(DE)) DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
+       call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
        return
     end select
 
@@ -705,10 +652,7 @@ contains
 
     ! energy flux into medium
 
-    if (present(DE)) then
-       DE = DE+snz*vz ! mechanical energy flux
-       DE = DE-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2 ! additional dissipation
-    end if
+    call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
 
     ! rotate back to x-y coordinates
 
@@ -725,6 +669,18 @@ contains
   end subroutine set_bc_mode3
 
 
+  subroutine energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
+
+    implicit none
+
+    real,intent(inout) :: DE
+    real,intent(in) :: snz,vz,snzFD,vzFD,Zs,Zsi
+
+    DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
+
+  end subroutine energy_rate_mode3
+
+
   subroutine set_bc_mode2(F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock,DE)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
@@ -734,11 +690,10 @@ contains
 
     implicit none
 
-    real,intent(inout) :: F(6)
+    real,intent(inout) :: F(6),DE
     real,intent(in) :: F0(6),U(2),rhog,normal(2),Zs,Zp,gamma,x,y,t
     character(*),intent(in) :: bc
     integer,intent(in) :: iblock
-    real,intent(inout),optional :: DE
 
     real :: Zsi,Zpi,vn,vt,snn,snt,stt,szz,vnFD,vtFD,snnFD,sntFD,sttFD,szzFD
     real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6),Ut,Un
@@ -890,13 +845,24 @@ contains
    end select
 
     ! energy flux into medium
-    if (present(DE)) then
-        DE = DE+snt*vt+vn*snn
-        DE = DE-0.25d0*Zsi*((sntFD-snt)+Zs*(vtFD-vt))**2
-        DE = DE-0.25d0*Zpi*((snnFD-snn)+Zs*(vnFD-vn))**2
-    endif
+
+   call energy_rate_mode2(DE,snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi)
 
   end subroutine set_bc_mode2
+
+
+  subroutine energy_rate_mode2(DE,snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi)
+
+    implicit none
+
+    real,intent(inout) :: DE
+    real,intent(in) :: snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi
+
+    DE = DE+snt*vt+vn*snn- &
+         0.25d0*Zsi*((sntFD-snt)+Zs*(vtFD-vt))**2- &
+         0.25d0*Zpi*((snnFD-snn)+Zp*(vnFD-vn))**2
+
+  end subroutine energy_rate_mode2
 
 
 end module boundaries

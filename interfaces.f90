@@ -51,39 +51,20 @@ contains
 
        ! enforce elasticity relations (and possibly friction)
        
-       if (allocated(I%DE)) then
-          select case(I%direction)
-          case('x')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize,dt, &
-                  I%DE(j),Fm%bndFR%DE(j),Fp%bndFL%DE(j))
-          case('y')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize,dt, &
-                  I%DE(j),Fm%bndFT%DE(j),Fp%bndFB%DE(j))
-          end select
-       else
-          select case(I%direction)
-          case('x')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize,dt)
-          case('y')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize,dt)
-          end select
-       end if
+       select case(I%direction)
+       case('x')
+          call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
+               I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
+               Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
+               I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
+               Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize,dt)
+       case('y')
+          call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
+               I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
+               Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
+               I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
+               Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize,dt)
+       end select
 
        ! store rates for integration
 
@@ -111,7 +92,7 @@ contains
 
 
   subroutine couple_points(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fm,Fp,F0,&
-       normal,coupling,i,x,y,t,Mm,Mp,mode,initialize,dt,DE,DEm,DEp)
+       normal,coupling,i,x,y,t,Mm,Mp,mode,initialize,dt)
 
     use friction, only : fr_type,load_stress
     use geometry, only : rotate_xy2nt
@@ -128,7 +109,6 @@ contains
     real,intent(in) :: x,y,t
     integer,intent(in) :: mode
     logical,intent(in) :: initialize
-    real,intent(inout),optional :: DE,DEm,DEp
 
     real :: stt,snt,snn
 
@@ -137,37 +117,23 @@ contains
 
     ! couple points
 
-    if (present(DE)) then
-       select case(mode)
-       case(2)
-          call couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p, &
-               Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),Mm(2),Mp(2),Mm(3),Mp(3),initialize,dt,DE,DEm,DEp)
-       case(3)
-          ! normal stress contribution from resolving in-plane stress field onto fault
-          call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
-          N0 = N0-snn
-          call couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p, &
-               Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),initialize,dt,DE,DEm,DEp)
-       end select
-    else
-       select case(mode)
-       case(2)
-          call couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p, &
-               Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),Mm(2),Mp(2),Mm(3),Mp(3),initialize,dt)
-       case(3)
-          ! normal stress contribution from resolving in-plane stress field onto fault
-          call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
-          N0 = N0-snn
-          call couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p, &
-               Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),initialize,dt)
-       end select
-    end if
+    select case(mode)
+    case(2)
+       call couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p, &
+            Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),Mm(2),Mp(2),Mm(3),Mp(3),initialize,dt)
+    case(3)
+       ! normal stress contribution from resolving in-plane stress field onto fault
+       call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
+       N0 = N0-snn
+       call couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p, &
+            Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),initialize,dt)
+    end select
 
   end subroutine couple_points
 
 
   subroutine couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p,Fm,Fp, &
-       normal,coupling,i,x,y,t,Zsm,Zsp,initialize,dt,DE,DEm,DEp)
+       normal,coupling,i,x,y,t,Zsm,Zsp,initialize,dt)
 
     use friction, only : fr_type,initial_state,solve_friction
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
@@ -184,7 +150,6 @@ contains
     integer,intent(in) :: i
     real,intent(in) :: x,y,t,dt,Zsm,Zsp
     logical,intent(in) :: initialize
-    real,intent(inout),optional :: DE,DEm,DEp
 
     logical :: compressive
     real :: Zsim,Zsip,Nlock,Slock,phis,etas, &
@@ -260,16 +225,6 @@ contains
     vzp = vzFDp+Zsip*(snzFDp-snzp)
     vzm = vzFDm-Zsim*(snzFDm-snzm)
 
-    ! energy flux (positive when energy flows out of medium into fault)
-
-    if (present(DE)) then
-       DEm = DEm+snzm*vzm-0.25d0*Zsim*((snzFDm-snzm)+Zsm*(vzFDm-vzm))**2
-       DEp = DEp-snzp*vzp-0.25d0*Zsip*((snzFDp-snzp)-Zsp*(vzFDp-vzp))**2
-       DE = DE-S*V- &
-            0.25d0*Zsim*((snzFDm-snzm)+Zsm*(vzFDm-vzm))**2- &
-            0.25d0*Zsip*((snzFDp-snzp)-Zsp*(vzFDp-vzp))**2
-    end if
-
     ! rotate back to x-y coordinates
 
     call rotate_fields_nt2xy(Fp,normal,vzp,stzFDp,snzp)
@@ -279,7 +234,7 @@ contains
 
 
   subroutine couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fm,Fp, &
-       normal,coupling,i,x,y,t,Zsm,Zsp,Zpm,Zpp,gammam,gammap,initialize,dt,DE,DEm,DEp)
+       normal,coupling,i,x,y,t,Zsm,Zsp,Zpm,Zpp,gammam,gammap,initialize,dt)
 
     use friction, only : fr_type,initial_state,solve_friction
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
@@ -297,7 +252,6 @@ contains
     integer,intent(in) :: i
     real,intent(in) :: x,y,t,dt,Zsm,Zsp,Zpm,Zpp,gammam,gammap
     logical,intent(in) :: initialize
-    real,intent(inout),optional :: DE,DEm,DEp
 
     logical :: previously_closed,compressive
     real :: Zsim,Zsip,Zpim,Zpip,Slock,Nlock,phis,phip,etas,etap, &
@@ -471,20 +425,6 @@ contains
     vtp = vtFDp+Zsip*(sntFDp-sntp)
     vtm = vtFDm-Zsim*(sntFDm-sntm)
     
-    ! energy flux (positive when energy flows out of medium into fault)
-
-    if (present(DE)) then
-       DEm = DEm+sntm*vtm-0.25d0*Zsim*((sntFDm-sntm)+Zsm*(vtFDm-vtm))**2
-       DEp = DEp-sntp*vtp-0.25d0*Zsip*((sntFDp-sntp)-Zsp*(vtFDp-vtp))**2
-       DEm = DEm+snnm*vnm-0.25d0*Zpim*((snnFDm-snnm)+Zsm*(vnFDm-vnm))**2
-       DEp = DEp-snnp*vnp-0.25d0*Zpip*((snnFDp-snnp)-Zsp*(vnFDp-vnp))**2
-       ! DE = DE + DEp + DEm
-       DE = DE-S*V
-       ! DE = DE-S*V- &
-       !      0.25d0*Zsim*((snzFDm-snzm)+Zsm*(vzFDm-vzm))**2- &
-       !      0.25d0*Zsip*((snzFDp-snzp)-Zsp*(vzFDp-vzp))**2
-    end if
-
     ! rotate back to x-y coordinates
 
     call rotate_fields_nt2xy(Fp,normal,vtp,vnp,sttp,sntp,snnp,szzp)

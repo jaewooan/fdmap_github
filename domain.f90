@@ -230,11 +230,10 @@ contains
     ! initialize interfaces (grid and processor information)
 
     do i = 1,D%nifaces
-       call init_iface(i,D%I(i),refine,energy_balance,input)
+       call init_iface(i,D%I(i),input)
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call init_iface_blocks(i,D%I(i),D%B(im)%G,D%B(ip)%G,D%C, &
-            refine,input,echo)
+       call init_iface_blocks(i,D%I(i),D%B(im)%G,D%B(ip)%G,D%C,refine)
        !call exchange_grid_edges(D%I(i),D%C,D%B(im)%G,D%B(ip)%G)
     end do
 
@@ -379,7 +378,7 @@ contains
   subroutine enforce_edge_conditions(D,initialize)
     
     use boundaries, only : apply_bc
-    use fault, only : couple_blocks
+    use interfaces, only : couple_blocks
 
     implicit none
 
@@ -564,8 +563,6 @@ contains
           call write_file_distributed(fh,D%I(i)%FR%Ds(my:py:sy))
        case('Dn')
           call write_file_distributed(fh,D%I(i)%FR%Dn(my:py:sy))
-       case('E')
-          call write_file_distributed(fh,D%I(i)%E(my:py:sy))
        case('D')
           call write_file_distributed(fh,D%I(i)%FR%D(my:py:sy))
        case('Psi')
@@ -637,8 +634,6 @@ contains
           call write_file_distributed(fh,D%I(i)%FR%Ds(mx:px:sx))
        case('Dn')
           call write_file_distributed(fh,D%I(i)%FR%Dn(mx:px:sx))
-       case('E')
-          call write_file_distributed(fh,D%I(i)%E(mx:px:sx))
        case('D')
           call write_file_distributed(fh,D%I(i)%FR%D(mx:px:sx))
        case('Psi')
@@ -912,8 +907,6 @@ contains
           ok = allocated(D%I(i)%FR%Ds)
        case('Dn')
           ok = allocated(D%I(i)%FR%Dn)
-       case('E')
-          ok = allocated(D%I(i)%E)
        case('D')
           ok = allocated(D%I(i)%FR%D)
        case('Psi')

@@ -187,10 +187,8 @@ contains
        if (M%response=='plastic') then
           call allocate_array_body(F%gammap ,C,ghost_nodes=.false.,Fval=0d0)
           call allocate_array_body(F%lambda ,C,ghost_nodes=.false.,Fval=0d0)
-       end if
-
-       if(M%plastic_strain_tensor) then
-         call allocate_array_body(F%Ep ,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
+          if(M%plastic_strain_tensor) &
+               call allocate_array_body(F%Ep ,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
        end if
     end if
     if (pmlx .and. .not.allocated(F%Wx)) then
@@ -205,13 +203,13 @@ contains
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndR,BF%bndFR,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndB,BF%bndFB,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndT,BF%bndFT,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
 
     ! initialize fields in interior of this block
 
@@ -473,8 +471,8 @@ contains
                   call read_file_distributed(fh,BF%bndFL%U( :,l))
                   call read_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%DE)
+                call read_file_distributed(fh,BF%bndFL%E)
+                call read_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
                    call read_file_distributed(fh,BF%bndFR%F (:,l))
@@ -484,8 +482,8 @@ contains
                   call read_file_distributed(fh,BF%bndFR%U( :,l))
                   call read_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%DE)
+                 call read_file_distributed(fh,BF%bndFR%E)
+                 call read_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
                    call read_file_distributed(fh,BF%bndFB%F (:,l))
@@ -495,8 +493,8 @@ contains
                   call read_file_distributed(fh,BF%bndFB%U( :,l))
                   call read_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%DE)
+                 call read_file_distributed(fh,BF%bndFB%E)
+                 call read_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
                    call read_file_distributed(fh,BF%bndFT%F (:,l))
@@ -506,8 +504,8 @@ contains
                   call read_file_distributed(fh,BF%bndFT%U( :,l))
                   call read_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%DE)
+                 call read_file_distributed(fh,BF%bndFT%E)
+                 call read_file_distributed(fh,BF%bndFT%DE)
              end select
           case('write')
              select case(side)
@@ -520,8 +518,8 @@ contains
                   call write_file_distributed(fh,BF%bndFL%U( :,l))
                   call write_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%DE)
+                 call write_file_distributed(fh,BF%bndFL%E)
+                 call write_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
                    call write_file_distributed(fh,BF%bndFR%F (:,l))
@@ -531,8 +529,8 @@ contains
                   call write_file_distributed(fh,BF%bndFR%U( :,l))
                   call write_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%DE)
+                 call write_file_distributed(fh,BF%bndFR%E)
+                 call write_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
                    call write_file_distributed(fh,BF%bndFB%F (:,l))
@@ -542,8 +540,8 @@ contains
                   call write_file_distributed(fh,BF%bndFB%U( :,l))
                   call write_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%DE)
+                 call write_file_distributed(fh,BF%bndFB%E)
+                 call write_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
                    call write_file_distributed(fh,BF%bndFT%F (:,l))
@@ -553,8 +551,8 @@ contains
                   call write_file_distributed(fh,BF%bndFT%U( :,l))
                   call write_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%DE)
+                 call write_file_distributed(fh,BF%bndFT%E)
+                 call write_file_distributed(fh,BF%bndFT%DE)
              end select
           end select
        end if
@@ -655,7 +653,7 @@ contains
 
 
   subroutine init_fields_side(bnd,bndF,Bskip,m,p,nF,nU,F0,mode,problem,t,iblock,&
-      P1,P2,P3,P4,energy_balance,Mat)
+      P1,P2,P3,P4,Mat)
 
     use geometry, only : curve
     use material, only : block_material
@@ -664,7 +662,7 @@ contains
 
     type(curve),intent(in) :: bnd
     type(bnd_fields),intent(inout) :: bndF
-    logical,intent(in) :: Bskip,energy_balance
+    logical,intent(in) :: Bskip
     integer,intent(in) :: m,p,nF,nU
     real,intent(in) :: F0(:),t
     integer,intent(in) :: mode,iblock
@@ -675,6 +673,30 @@ contains
     integer :: i
     real :: A1,A2,A3,A4
     real,dimension(nF) :: F1,F2,F3,F4
+
+    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
+    bndF%F  = 1d40
+    bndF%F0 = 1d40
+    bndF%M  = 1d40
+
+    allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
+    bndF%U  = 0d0
+    bndF%DU  = 1d40
+
+    allocate(bndF%E(m:p),bndF%DE(m:p))
+    bndF%E  = 0d0
+    bndF%DE = 1d40
+
+    ! note that boundary fields are allocated (but not initialized with proper values)
+    ! even if process is not responsible for this block -- this is because fields on
+    ! opposite side of interface (for which another process is responsible) may be needed
+    ! to enforce interface conditions (values are set during exchange with other process)
+
+    if (Bskip) return
+
+    ! initial fields on boundaries
+
+    ! store amplitudes for field perturbations
 
     select case(mode)
     case(2)
@@ -689,27 +711,7 @@ contains
        F4 = (/ P4%vz,P4%sxz,P4%syz /)
     end select
 
-    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
-    bndF%F  = 1d40
-    bndF%F0 = 1d40
-    bndF%M  = 1d40
-
-    allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
-    bndF%U  = 0d0
-    bndF%DU  = 1d40
-
-    if (energy_balance) then
-       allocate(bndF%E(m:p),bndF%DE(m:p))
-       bndF%E  = 0d0
-       bndF%DE = 1d40
-    end if
-
-    ! note that boundary fields are allocated (but not initialized with proper values)
-    ! even if process is not responsible for this block -- this is because fields on
-    ! opposite side of interface (for which another process is responsible) may be needed
-    ! to enforce interface conditions (values are set during exchange with other process)
-
-    if (Bskip) return
+    ! then set possibly spatially variable fields
 
     do i = m,p
        A1 = perturb_fields(bnd%x(i),bnd%y(i),P1)
