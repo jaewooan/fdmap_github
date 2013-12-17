@@ -92,7 +92,7 @@ endif
 # Files
 
 Files = boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
-	erupt.f90 fault.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
+	erupt.f90 interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
 	geometry.f90 grid.f90 io.f90 main.f90 material.f90 \
 	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \
 	rates.f90 rates_heterogeneous.f90 source.f90 thermpres.f90 \
@@ -140,15 +140,15 @@ boundaries.o: mpi_routines.o mpi_routines2d.o thermpres.o
 
 checkpoint.o: boundaries.o domain.o fields.o io.o mpi_routines.o
 
-domain.o: boundaries.o fault.o fd_coeff.o fields.o grid.o io.o material.o
+domain.o: boundaries.o interfaces.o fd_coeff.o fields.o grid.o io.o material.o
 domain.o: mpi_routines.o mpi_routines2d.o source.o utilities.o
 
 energy.o: domain.o fields.o grid.o material.o mpi_routines.o mpi_routines2d.o
 
 erupt.o: fd.o fd_coeff.o io.o mpi_routines.o mpi_routines2d.o utilities.o
 
-fault.o: boundaries.o erupt.o fields.o friction.o geometry.o io.o mms.o
-fault.o: mpi_routines2d.o thermpres.o
+interfaces.o: boundaries.o erupt.o fields.o friction.o geometry.o io.o mms.o
+interfaces.o: mpi_routines2d.o thermpres.o
 
 fd.o: fd_coeff.o io.o
 
