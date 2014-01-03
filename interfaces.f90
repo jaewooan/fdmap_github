@@ -152,7 +152,6 @@ contains
     real,intent(in) :: x,y,t,dt,Zsm,Zsp
     logical,intent(in) :: initialize
 
-    logical :: compressive
     real :: Zsim,Zsip,Nlock,Slock,phis,etas, &
          vzp,snzp,vzFDp,snzFDp,stzFDp, &
          vzm,snzm,vzFDm,snzFDm,stzFDm
@@ -194,9 +193,9 @@ contains
        
        Slock = S0+phis
        Nlock = N0-p
-       compressive = (Nlock>0d0)
-       N = max(Nlock,0d0)
-       O = 0d0 ! no opening in mode III, even for tensile normal stresses
+
+       O = 0d0
+       N = Nlock
        
        if (initialize) then
           V = vzFDp-vzFDm
@@ -204,12 +203,7 @@ contains
           call initial_state(FR,Psi,V,S,N,i,x,y,dt)
        end if
 
-       if (compressive) then ! apply friction law
-          call solve_friction(FR,V,S,N,Slock,etas,D,Psi,i,x,y,t,.false.)
-       else ! no shear resistance to slip (cannot allow opening in mode III)
-          S = 0d0
-          V = Slock/etas
-       end if
+       call solve_friction(FR,V,S,N,Slock,etas,D,Psi,i,x,y,t,.false.)
 
     case('locked')
 
@@ -254,7 +248,6 @@ contains
     real,intent(in) :: x,y,t,dt,Zsm,Zsp,Zpm,Zpp,gammam,gammap
     logical,intent(in) :: initialize
 
-    logical :: previously_closed,compressive
     real :: Zsim,Zsip,Zpim,Zpip,Slock,Nlock,phis,phip,etas,etap, &
          vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
          vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
@@ -326,64 +319,21 @@ contains
 
     case('friction')
 
-       ! check for fault opening:
+       ! implementation below assumes no opening (previous versions of code included logic for opening/closing)
        ! Nlock = effective normal stress if fault is constrained against opening/closing
-       ! (a) if previously closed (Dn=0) and Nlock>0 (compressive), then fault remains closed => friction
-       ! (b) if previously closed (Dn=0) and Nlock<=0 (tensile), then fault opens => free surface
-       ! (c) if previously opened (Dn>0) and Nlock<=0 (tensile), then fault remains open => free surface
-       ! (d) if previously opened (Dn>0) and Nlock>0 (compressive), then fault is closing => free surface
-       ! Note that with explicit time stepping methods, (d) may result in interpenetration
-       
-       !Dn = max(Dn,0d0) ! SHOULD ADD TO CORRECT INTERPENETRATION (BUT MAY BE MORE APPROPRIATE BEFORE OUTPUT)
-       previously_closed = (Dn<=0d0) ! SHOULD BE STRICT EQUALITY, BUT NOT WITH INTERPENETRATION
-       compressive = (Nlock>0d0)
-       
+
+       O = 0d0
+       N = Nlock
+
        if (initialize) then
-          O = 0d0
-          N = Nlock
           V = vtFDp-vtFDm
           S = Slock-etas*V
           call initial_state(FR,Psi,V,S,N,i,x,y,dt)
        end if
        
-       if (previously_closed) then
-          if (compressive) then ! fault closed => friction
-             O = 0d0
-             N = Nlock
-             if(FR%friction_law == 'RSL-mms') then
-                N = inplane_fault_mms(x,y,t,1,'N')
-             end if
-             call solve_friction(FR,V,S,N,Slock,etas,D,Psi,i,x,y,t,.false.)
-          else
-             if (FR%opening) then ! fault opens => free surface
-                N = 0d0
-                O = -Nlock/etap
-                S = 0d0
-                V = Slock/etas
-             else
-                ! fault constrained against opening, so tensile normal stress,
-                ! but offers no shear resistance to slip
-                O = 0d0
-                N = Nlock
-                S = 0d0
-                V = Slock/etas
-             end if
-          end if
-       else ! fault open => free surface
-          if (FR%opening) then ! fault opening permitted
-             N = 0d0
-             O = -Nlock/etap
-             S = 0d0
-             V = Slock/etas
-          else
-             ! fault constrained against opening, so tensile normal stress,
-             ! but offers no shear resistance to slip
-             O = 0d0
-             N = Nlock
-             S = 0d0
-             V = Slock/etas
-          end if
-       end if
+       if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')
+
+       call solve_friction(FR,V,S,N,Slock,etas,D,Psi,i,x,y,t,.false.)
     
        snnp = -(N-N0+p)
        snnm = -(N-N0+p)
