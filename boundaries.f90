@@ -549,37 +549,37 @@ contains
     if (bc=='none') return
 
     do i = m,p
-       call set_bc(bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
-            bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock,bndF%DE(i))
+       call set_bc(bndF%Fhat(i,:),bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
+            bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock)
     end do
     
   end subroutine apply_bc_side
 
 
-  subroutine set_bc(F,F0,U,rhog,x,y,normal,bc,M,mode,t,iblock,DE)
+  subroutine set_bc(Fhat,F,F0,U,rhog,x,y,normal,bc,M,mode,t,iblock)
 
     implicit none
 
-    ! F  = current fields (grid data when initially passed here,
-    !      then overwritten with hat variables)
+    ! F  = fields (grid data)
+    ! FHAT = fields (hat variables)
     ! F0 = initial fields
 
-    real,intent(inout) :: F(:),DE
-    real,intent(in) :: F0(:),U(:),rhog,x,y,normal(2),M(3),t
+    real,intent(out) :: Fhat(:)
+    real,intent(in) :: F(:),F0(:),U(:),rhog,x,y,normal(2),M(3),t
     character(*),intent(in) :: bc
     integer,intent(in) :: mode,iblock
 
     select case(mode)
     case(2)
-       call set_bc_mode2(F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock,DE)
+       call set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock)
     case(3)
-       call set_bc_mode3(F,F0,normal,bc,M(1),x,y,t,iblock,DE)
+       call set_bc_mode3(Fhat,F,F0,normal,bc,M(1),x,y,t,iblock)
     end select
 
   end subroutine set_bc
 
 
-  subroutine set_bc_mode3(F,F0,normal,bc,Zs,x,y,t,iblock,DE)
+  subroutine set_bc_mode3(Fhat,F,F0,normal,bc,Zs,x,y,t,iblock)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use mms, only : bessel
@@ -587,101 +587,75 @@ contains
 
     implicit none
 
-    real,intent(inout) :: F(3),DE
-    real,intent(in) :: F0(3),normal(2),Zs,x,y,t
+    real,intent(out) :: Fhat(3)
+    real,intent(in) :: F(3),F0(3),normal(2),Zs,x,y,t
     character(*),intent(in) :: bc
     integer,intent(in) :: iblock
 
     real :: Zsi,vz,snz,vzFD,snzFD,stzFD,vzEX,snzEX,stzEX,Fe(3)
 
-    if (Zs==0d0) return ! fluid, no boundary condition
+    if (Zs==0d0) then
+       ! fluid, no boundary condition
+       Fhat = F
+       return
+    end if
        
     Zsi = 1d0/Zs
 
-    ! special cases first
+    ! subtract initial fields (if needed for BC) and
+    ! rotate into local normal and tangential coordinates
+    
+    select case(bc)
+    case default
+       call rotate_fields_xy2nt(F-F0,normal,vzFD,stzFD,snzFD)
+    case('bessel-v','bessel-w')
+       call rotate_fields_xy2nt(F   ,normal,vzFD,stzFD,snzFD)
+    end select
+
+    ! then enforce BC
 
     select case(bc)
     case('bessel-v')
-       call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
        vz = bessel(x,y,t,iblock,'vz')
        snz = snzFD-Zs*(vzFD-vz)
-       call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
-       return
     case('bessel-w')
-       call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
        Fe(1) = bessel(x,y,t,iblock,'vz')
        Fe(2) = bessel(x,y,t,iblock,'sxz')
        Fe(3) = bessel(x,y,t,iblock,'syz')
        call rotate_fields_xy2nt(Fe,normal,vzEX,stzEX,snzEX)
        vz = 0.5d0*(vzEX+vzFD+Zsi*(snzEX-snzFD))
        snz = 0.5d0*(snzEX+snzFD+Zs*(vzEX-vzFD))
-       call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
-       call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
-       return
-    end select
-
-    ! subtract initial fields
-    
-    select case(bc)
-    ! case('rigid-0','absorbing-0','free-0')
-    case default
-        F = F-F0
-    end select
-
-    ! rotate into local normal and tangential coordinates
-
-    call rotate_fields_xy2nt(F,normal,vzFD,stzFD,snzFD)
-
-    ! apply boundary conditions in local coordinates
-
-    select case(bc)
+    case('absorbing')
+       vz   = 0.5d0*( vzFD-Zsi*snzFD)
+       snz  = 0.5d0*(snzFD-Zs * vzFD)
+    case('free')
+       vz   = vzFD-Zsi*snzFD
+       snz  = 0d0
+    case('rigid')
+       vz   = 0d0
+       snz  = snzFD-Zs*vzFD
     case default
        call error('Invalid boundary condition (' // &
             trim(bc) // ')','set_bc_mode3')
-    case('absorbing','absorbing-0')
-       vz   = 0.5d0*( vzFD-Zsi*snzFD)
-       snz  = 0.5d0*(snzFD-Zs * vzFD)
-    case('free','free-0')
-       vz   = vzFD-Zsi*snzFD
-       snz  = 0d0
-    case('rigid','rigid-0')
-       vz   = 0d0
-       snz  = snzFD-Zs*vzFD
     end select
-
-    ! energy flux into medium
-
-    call energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
 
     ! rotate back to x-y coordinates
 
-    call rotate_fields_nt2xy(F,normal,vz,stzFD,snz)
+    call rotate_fields_nt2xy(Fhat,normal,vz,stzFD,snz)
 
-    ! add initial fields
+    ! and add initial fields (if needed)
 
     select case(bc)
-    ! case('rigid-0','absorbing-0','free-0')
     case default
-        F = F+F0
+       Fhat = Fhat+F0
+    case('bessel-v','bessel-w')
+       ! initial fields not required 
     end select
 
   end subroutine set_bc_mode3
 
 
-  subroutine energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
-
-    implicit none
-
-    real,intent(inout) :: DE
-    real,intent(in) :: snz,vz,snzFD,vzFD,Zs,Zsi
-
-    DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
-
-  end subroutine energy_rate_mode3
-
-
-  subroutine set_bc_mode2(F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock,DE)
+  subroutine set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use mms, only : mms_sin,inplane_bessel,inplane_fault_mms
@@ -690,56 +664,60 @@ contains
 
     implicit none
 
-    real,intent(inout) :: F(6),DE
-    real,intent(in) :: F0(6),U(2),rhog,normal(2),Zs,Zp,gamma,x,y,t
+    real,intent(out) :: Fhat(6)
+    real,intent(in) :: F(6),F0(6),U(2),rhog,normal(2),Zs,Zp,gamma,x,y,t
     character(*),intent(in) :: bc
     integer,intent(in) :: iblock
 
     real :: Zsi,Zpi,vn,vt,snn,snt,stt,szz,vnFD,vtFD,snnFD,sntFD,sttFD,szzFD
     real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6),Ut,Un
 
-    ! fluid case
-
     if (Zs==0d0) then
-       Zsi = 0d0
+       Zsi = 0d0 ! avoid division by zero for fluid case
     else
        Zsi = 1d0/Zs
     end if
 
     Zpi = 1d0/Zp
 
-    ! special cases first
+    ! subtract initial fields (if needed for BC) and
+    ! rotate into local normal and tangential coordinates
 
     select case(bc)
+    case default
+       call rotate_fields_xy2nt(F-F0,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
+    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+       call rotate_fields_xy2nt(F  ,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
+    end select
 
+    ! then enforce BC
+
+    select case(bc)
+       
     case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w') ! MMS
-
-       ! rotate into local normal and tangential coordinates
-
-       call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
-
+       
        select case(bc)
        case('inplane-bessel-w')
-         FEX(1) = inplane_bessel(x,y,t,'vx')
-         FEX(2) = inplane_bessel(x,y,t,'vy')
-         FEX(3) = inplane_bessel(x,y,t,'sxx')
-         FEX(4) = inplane_bessel(x,y,t,'sxy')
-         FEX(5) = inplane_bessel(x,y,t,'syy')
-         FEX(6) = 0d0
+          FEX(1) = inplane_bessel(x,y,t,'vx')
+          FEX(2) = inplane_bessel(x,y,t,'vy')
+          FEX(3) = inplane_bessel(x,y,t,'sxx')
+          FEX(4) = inplane_bessel(x,y,t,'sxy')
+          FEX(5) = inplane_bessel(x,y,t,'syy')
+          FEX(6) = 0d0
        case('inplane-fault-mms-w')
-         FEX(1) = inplane_fault_mms(x,y,t,iblock,'vx')
-         FEX(2) = inplane_fault_mms(x,y,t,iblock,'vy')
-         FEX(3) = inplane_fault_mms(x,y,t,iblock,'sxx')
-         FEX(4) = inplane_fault_mms(x,y,t,iblock,'sxy')
-         FEX(5) = inplane_fault_mms(x,y,t,iblock,'syy')
-         FEX(6) = inplane_fault_mms(x,y,t,iblock,'szz')
+          FEX(1) = inplane_fault_mms(x,y,t,iblock,'vx')
+          FEX(2) = inplane_fault_mms(x,y,t,iblock,'vy')
+          FEX(3) = inplane_fault_mms(x,y,t,iblock,'sxx')
+          FEX(4) = inplane_fault_mms(x,y,t,iblock,'sxy')
+          FEX(5) = inplane_fault_mms(x,y,t,iblock,'syy')
+          FEX(6) = inplane_fault_mms(x,y,t,iblock,'szz')
        case('mms-sin-w')
-         FEX(1) = mms_sin(x,y,t,iblock,'vx')
-         FEX(2) = mms_sin(x,y,t,iblock,'vy')
-         FEX(3) = mms_sin(x,y,t,iblock,'sxx')
-         FEX(4) = mms_sin(x,y,t,iblock,'sxy')
-         FEX(5) = mms_sin(x,y,t,iblock,'syy')
-         FEX(6) = 0d0
+          FEX(1) = mms_sin(x,y,t,iblock,'vx')
+          FEX(2) = mms_sin(x,y,t,iblock,'vy')
+          FEX(3) = mms_sin(x,y,t,iblock,'sxx')
+          FEX(4) = mms_sin(x,y,t,iblock,'sxy')
+          FEX(5) = mms_sin(x,y,t,iblock,'syy')
+          FEX(6) = 0d0
        end select
        call rotate_fields_xy2nt(FEX,normal,vtEX,vnEX,sttEX,sntEX,snnEX,szzEX)
        vt  = 0.5d0*(vtEX+vtFD+Zsi*(sntEX-sntFD))
@@ -748,121 +726,92 @@ contains
        snn = 0.5d0*(snnEX+snnFD+Zp*(vnEX-vnFD))
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
-       call rotate_fields_nt2xy(F,normal,vt,vn,stt,snt,snn,szz)
-
+       call rotate_fields_nt2xy(Fhat,normal,vt,vn,stt,snt,snn,szz)
+       
     case('rigid-0','absorbing-0','free-0') 
-       ! BC on fields, not field perturbations about initial state
-
-       ! rotate into local normal and tangential coordinates
-
-       call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
-
+       
        ! apply boundary conditions in local coordinates
-
+       
        select case(bc)
-       case('absorbing')
-           vt  = 0.5d0*( vtFD-Zsi*sntFD)
-           snt = 0.5d0*(sntFD-Zs * vtFD)
-           vn  = 0.5d0*( vnFD-Zpi*snnFD)
-           snn = 0.5d0*(snnFD-Zp * vnFD)
-       case('free')
-           vt  = vtFD-Zsi*sntFD
-           snt = 0d0
-           vn  = vnFD-Zpi*snnFD
-           snn = 0d0
-       case('rigid')
-           vt  = 0d0
-           snt = sntFD-Zs*vtFD
-           vn  = 0d0
-           snn = snnFD-Zp*vnFD
+       case('absorbing','absorbing-0')
+          vt  = 0.5d0*( vtFD-Zsi*sntFD)
+          snt = 0.5d0*(sntFD-Zs * vtFD)
+          vn  = 0.5d0*( vnFD-Zpi*snnFD)
+          snn = 0.5d0*(snnFD-Zp * vnFD)
+       case('free','free-0')
+          vt  = vtFD-Zsi*sntFD
+          snt = 0d0
+          vn  = vnFD-Zpi*snnFD
+          snn = 0d0
+       case('rigid','rigid-0')
+          vt  = 0d0
+          snt = sntFD-Zs*vtFD
+          vn  = 0d0
+          snn = snnFD-Zp*vnFD
        end select
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
-
-       ! rotate back to x-y coordinates
-
-       call rotate_fields_nt2xy(F,normal,vt,vn,stt,snt,snn,szz)
 
     case('rigid','absorbing','free','absorbing-velocity','free-velocity','tsunami') 
-       ! BC on field perturbations about initial state
-
-       F = F-F0
-       ! rotate into local normal and tangential coordinates
-       call rotate_fields_xy2nt(F,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
-
+       
        ! apply boundary conditions in local coordinates
-
+       
        select case(bc)
-       case default
-           call error('Invalid boundary condition (' // &
-           trim(bc) // ')','set_bc_mode2')
        case('absorbing')
-           vt  = 0.5d0*( vtFD-Zsi*sntFD)
-           snt = 0.5d0*(sntFD-Zs * vtFD)
-           vn  = 0.5d0*( vnFD-Zpi*snnFD)
-           snn = 0.5d0*(snnFD-Zp * vnFD)
+          vt  = 0.5d0*( vtFD-Zsi*sntFD)
+          snt = 0.5d0*(sntFD-Zs * vtFD)
+          vn  = 0.5d0*( vnFD-Zpi*snnFD)
+          snn = 0.5d0*(snnFD-Zp * vnFD)
        case('free')
-           vt  = vtFD-Zsi*sntFD
-           snt = 0d0
-           vn  = vnFD-Zpi*snnFD
-           snn = 0d0
+          vt  = vtFD-Zsi*sntFD
+          snt = 0d0
+          vn  = vnFD-Zpi*snnFD
+          snn = 0d0
        case('rigid')
-           vt  = 0d0
-           snt = sntFD-Zs*vtFD
-           vn  = 0d0
-           snn = snnFD-Zp*vnFD
+          vt  = 0d0
+          snt = sntFD-Zs*vtFD
+          vn  = 0d0
+          snn = snnFD-Zp*vnFD
        case('absorbing-velocity')
-           vt  = -Zsi*sntFD
-           snt = sntFD
-           vn  = -Zpi*snnFD
-           snn = snnFD
+          vt  = -Zsi*sntFD
+          snt = sntFD
+          vn  = -Zpi*snnFD
+          snn = snnFD
        case('free-velocity')
-           vt  = vtFD-Zsi*sntFD
-           snt = sntFD
-           vn  = vnFD-Zpi*snnFD
-           snn = snnFD
-        case('tsunami')
-           vt  = vtFD-Zsi*sntFD
-           snt = 0d0
-           ! rotate displacement vector
-           call rotate_xy2nt(U(1),U(2),Ut,Un,normal)
-           snn = -rhog*Un
-           vn  = vnFD-Zpi*(snnFD-snn)
+          vt  = vtFD-Zsi*sntFD
+          snt = sntFD
+          vn  = vnFD-Zpi*snnFD
+          snn = snnFD
+       case('tsunami')
+          vt  = vtFD-Zsi*sntFD
+          snt = 0d0
+          ! rotate displacement vector
+          call rotate_xy2nt(U(1),U(2),Ut,Un,normal)
+          snn = -rhog*Un
+          vn  = vnFD-Zpi*(snnFD-snn)
        end select
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
-
-       ! rotate back to x-y coordinates
-
-       call rotate_fields_nt2xy(F,normal,vt,vn,stt,snt,snn,szz)
-
-       ! add initial fields
-       F = F+F0
-
-   case default
+       
+    case default
        call error('Invalid boundary condition (' // &
-       trim(bc) // ')','set_bc_mode2')
-   end select
+            trim(bc) // ')','set_bc_mode2')
+    end select
 
-    ! energy flux into medium
+    ! rotate back to x-y coordinates
+    
+    call rotate_fields_nt2xy(Fhat,normal,vt,vn,stt,snt,snn,szz)
+    
+    ! and add initial fields (if needed)
 
-   call energy_rate_mode2(DE,snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi)
-
+    select case(bc)
+    case default
+       Fhat = Fhat+F0
+    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+       ! initial fields not required 
+    end select
+    
   end subroutine set_bc_mode2
-
-
-  subroutine energy_rate_mode2(DE,snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi)
-
-    implicit none
-
-    real,intent(inout) :: DE
-    real,intent(in) :: snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi
-
-    DE = DE+snt*vt+vn*snn- &
-         0.25d0*Zsi*((sntFD-snt)+Zs*(vtFD-vt))**2- &
-         0.25d0*Zpi*((snnFD-snn)+Zp*(vnFD-vn))**2
-
-  end subroutine energy_rate_mode2
 
 
 end module boundaries

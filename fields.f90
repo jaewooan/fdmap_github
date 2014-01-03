@@ -3,7 +3,8 @@ module fields
   implicit none
 
   type :: bnd_fields
-     ! F = current fields (first grid data, then overwritten with hat variables)
+     ! F = fields (grid data)
+     ! FHAT = fields (hat variables)
      ! DF = field rates
      ! F0 = initial fields
      ! M = material properties
@@ -14,7 +15,7 @@ module fields
      ! DU = boundary displacement rate
      logical :: holds_bnd
      integer :: comm
-     real,dimension(:,:),allocatable :: U,DU,F,F0,DF,M
+     real,dimension(:,:),allocatable :: U,DU,F,Fhat,F0,DF,M
      real,dimension(:),allocatable :: E,DE
   end type bnd_fields
 
@@ -89,7 +90,6 @@ contains
     namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
          P1,P2,P3,P4,P5,besselA
-
 
     ! defaults
 
@@ -295,14 +295,15 @@ contains
 
     type(bnd_fields),intent(inout) :: bndF
 
-    if (allocated(bndF%F  )) deallocate(bndF%F  )
-    if (allocated(bndF%DF )) deallocate(bndF%DF )
-    if (allocated(bndF%F0 )) deallocate(bndF%F0 )
-    if (allocated(bndF%M  )) deallocate(bndF%M  )
-    if (allocated(bndF%U  )) deallocate(bndF%U  )
-    if (allocated(bndF%DU )) deallocate(bndF%DU )
-    if (allocated(bndF%E  )) deallocate(bndF%E  )
-    if (allocated(bndF%DE )) deallocate(bndF%DE )
+    if (allocated(bndF%F   )) deallocate(bndF%F   )
+    if (allocated(bndF%Fhat)) deallocate(bndF%Fhat)
+    if (allocated(bndF%DF  )) deallocate(bndF%DF  )
+    if (allocated(bndF%F0  )) deallocate(bndF%F0  )
+    if (allocated(bndF%M   )) deallocate(bndF%M   )
+    if (allocated(bndF%U   )) deallocate(bndF%U   )
+    if (allocated(bndF%DU  )) deallocate(bndF%DU  )
+    if (allocated(bndF%E   )) deallocate(bndF%E   )
+    if (allocated(bndF%DE  )) deallocate(bndF%DE  )
 
   end subroutine destroy_bnd_fields
 
@@ -464,8 +465,9 @@ contains
              select case(side)
              case(1) ! L
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFL%F (:,l))
-                   call read_file_distributed(fh,BF%bndFL%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFL%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFL%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFL%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFL%U( :,l))
@@ -475,8 +477,9 @@ contains
                 call read_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFR%F (:,l))
-                   call read_file_distributed(fh,BF%bndFR%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFR%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFR%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFR%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFR%U( :,l))
@@ -486,8 +489,9 @@ contains
                  call read_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFB%F (:,l))
-                   call read_file_distributed(fh,BF%bndFB%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFB%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFB%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFB%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFB%U( :,l))
@@ -497,8 +501,9 @@ contains
                  call read_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFT%F (:,l))
-                   call read_file_distributed(fh,BF%bndFT%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFT%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFT%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFT%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFT%U( :,l))
@@ -511,8 +516,9 @@ contains
              select case(side)
              case(1) ! L
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFL%F (:,l))
-                   call write_file_distributed(fh,BF%bndFL%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFL%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFL%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFL%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFL%U( :,l))
@@ -522,8 +528,9 @@ contains
                  call write_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFR%F (:,l))
-                   call write_file_distributed(fh,BF%bndFR%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFR%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFR%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFR%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFR%U( :,l))
@@ -533,8 +540,9 @@ contains
                  call write_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFB%F (:,l))
-                   call write_file_distributed(fh,BF%bndFB%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFB%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFB%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFB%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFB%U( :,l))
@@ -544,8 +552,9 @@ contains
                  call write_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFT%F (:,l))
-                   call write_file_distributed(fh,BF%bndFT%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFT%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFT%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFT%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFT%U( :,l))
@@ -674,10 +683,11 @@ contains
     real :: A1,A2,A3,A4
     real,dimension(nF) :: F1,F2,F3,F4
 
-    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
-    bndF%F  = 1d40
-    bndF%F0 = 1d40
-    bndF%M  = 1d40
+    allocate(bndF%F(m:p,nF),bndF%Fhat(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
+    bndF%F    = 1d40
+    bndF%Fhat = 1d40
+    bndF%F0   = 1d40
+    bndF%M    = 1d40
 
     allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
     bndF%U  = 0d0

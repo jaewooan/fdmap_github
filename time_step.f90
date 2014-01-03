@@ -231,7 +231,7 @@ contains
     ! energy dissipation and boundary displacement rates
     
     do i = 1,D%nblocks
-       call set_rates_energy(  D%B(i)%G,D%B(i)%F)
+       call set_rates_energy(  D%B(i)%G,D%B(i)%F,D%mode)
        call set_rates_boundary(D%B(i)%G,D%B(i)%F,D%F%nU)
     end do
     
