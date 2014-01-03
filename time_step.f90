@@ -736,7 +736,7 @@ contains
     if (B%sideL.and.B%nx/=1) then
        i = B%mgx
        do j = B%my,B%py
-          call SAT_term(F%DF(i,j,:),BF%bndFL%F(j,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFL%Fhat(j,:),BF%bndFL%F(j,:), &
                mode,B%bndL%n(j,:),BF%bndFL%M(j,4),BF%bndFL%M(j,5))
        end do
     end if
@@ -744,7 +744,7 @@ contains
     if (B%sideR.and.B%nx/=1) then
        i = B%pgx
        do j = B%my,B%py
-          call SAT_term(F%DF(i,j,:),BF%bndFR%F(j,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFR%Fhat(j,:),BF%bndFR%F(j,:), &
                mode,B%bndR%n(j,:),BF%bndFR%M(j,4),BF%bndFR%M(j,5))
        end do
     end if
@@ -752,7 +752,7 @@ contains
     if (B%sideB.and.B%ny/=1) then
        j = B%mgy
        do i = B%mx,B%px
-          call SAT_term(F%DF(i,j,:),BF%bndFB%F(i,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFB%Fhat(i,:),BF%bndFB%F(i,:), &
                mode,B%bndB%n(i,:),BF%bndFB%M(i,4),BF%bndFB%M(i,5))
        end do
     end if
@@ -760,7 +760,7 @@ contains
     if (B%sideT.and.B%ny/=1) then
        j = B%pgy
        do i = B%mx,B%px
-          call SAT_term(F%DF(i,j,:),BF%bndFT%F(i,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFT%Fhat(i,:),BF%bndFT%F(i,:), &
                mode,B%bndT%n(i,:),BF%bndFT%M(i,4),BF%bndFT%M(i,5))
        end do
     end if
@@ -768,12 +768,12 @@ contains
   end subroutine set_rates_SAT
 
 
-  subroutine SAT_term(DF,Fbnd,F,mode,normal,Ks,Kp)
+  subroutine SAT_term(DF,Fhat,F,mode,normal,Ks,Kp)
 
     implicit none
 
     real,dimension(:),intent(inout) :: DF
-    real,dimension(:),intent(in) :: Fbnd,F,normal
+    real,dimension(:),intent(in) :: Fhat,F,normal
     integer,intent(in) :: mode
     real,intent(in) :: Ks,Kp
 
@@ -781,11 +781,11 @@ contains
 
     select case(mode)
     case(2)
-       call split_sp(Fbnd-F,normal,Fs,Fp)
+       call split_sp(Fhat-F,normal,Fs,Fp)
        DF = DF+Ks*Fs
        DF = DF+Kp*Fp
     case(3)
-       DF = DF+Ks*(Fbnd-F)
+       DF = DF+Ks*(Fhat-F)
     end select
 
   end subroutine SAT_term

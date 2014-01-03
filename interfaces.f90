@@ -55,13 +55,13 @@ contains
        case('x')
           call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
                I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-               Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
+               Fm%bndFR%Fhat(j,:),Fp%bndFL%Fhat(j,:),Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
                I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
                Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize,dt)
        case('y')
           call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
                I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-               Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
+               Fm%bndFT%Fhat(j,:),Fp%bndFB%Fhat(j,:),Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
                I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
                Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize,dt)
        end select
@@ -91,7 +91,7 @@ contains
   end subroutine couple_blocks
 
 
-  subroutine couple_points(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fm,Fp,F0,&
+  subroutine couple_points(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fhatm,Fhatp,Fm,Fp,F0,&
        normal,coupling,i,x,y,t,Mm,Mp,mode,initialize,dt)
 
     use friction, only : fr_type,load_stress
@@ -102,7 +102,8 @@ contains
     type(fr_type),intent(in) :: FR
     real,intent(inout) :: V,O,S,N,S0,N0,Psi
     real,intent(in) :: Dn,D,p,dt,Mm(3),Mp(3)
-    real,dimension(:),intent(inout) :: Fm,Fp
+    real,dimension(:),intent(out) :: Fhatm,Fhatp
+    real,dimension(:),intent(in) :: Fm,Fp
     real,intent(in) :: F0(9),normal(2)
     character(*),intent(in) :: coupling
     integer,intent(in) :: i
@@ -120,19 +121,19 @@ contains
     select case(mode)
     case(2)
        call couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p, &
-            Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),Mm(2),Mp(2),Mm(3),Mp(3),initialize,dt)
+            Fhatm,Fhatp,Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),Mm(2),Mp(2),Mm(3),Mp(3),initialize,dt)
     case(3)
        ! normal stress contribution from resolving in-plane stress field onto fault
        call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
        N0 = N0-snn
        call couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p, &
-            Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),initialize,dt)
+            Fhatm,Fhatp,Fm,Fp,normal,coupling,i,x,y,t,Mm(1),Mp(1),initialize,dt)
     end select
 
   end subroutine couple_points
 
 
-  subroutine couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p,Fm,Fp, &
+  subroutine couple_mode3(FR,V,O,S,N,S0,N0,D,Psi,p,Fhatm,Fhatp,Fm,Fp, &
        normal,coupling,i,x,y,t,Zsm,Zsp,initialize,dt)
 
     use friction, only : fr_type,initial_state,solve_friction
@@ -144,8 +145,8 @@ contains
     type(fr_type),intent(in) :: FR
     real,intent(inout) :: V,O,S,N,Psi
     real,intent(in) :: S0,N0,D,p
-    real,dimension(3),intent(inout) :: Fm,Fp
-    real,dimension(2),intent(in) :: normal
+    real,intent(out) :: Fhatm(3),Fhatp(3)
+    real,intent(in) :: normal(2),Fm(3),Fp(3)
     character(*),intent(in) :: coupling
     integer,intent(in) :: i
     real,intent(in) :: x,y,t,dt,Zsm,Zsp
@@ -227,13 +228,13 @@ contains
 
     ! rotate back to x-y coordinates
 
-    call rotate_fields_nt2xy(Fp,normal,vzp,stzFDp,snzp)
-    call rotate_fields_nt2xy(Fm,normal,vzm,stzFDm,snzm)
+    call rotate_fields_nt2xy(Fhatp,normal,vzp,stzFDp,snzp)
+    call rotate_fields_nt2xy(Fhatm,normal,vzm,stzFDm,snzm)
 
   end subroutine couple_mode3
 
 
-  subroutine couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fm,Fp, &
+  subroutine couple_mode2(FR,V,O,S,N,S0,N0,Dn,D,Psi,p,Fhatm,Fhatp,Fm,Fp, &
        normal,coupling,i,x,y,t,Zsm,Zsp,Zpm,Zpp,gammam,gammap,initialize,dt)
 
     use friction, only : fr_type,initial_state,solve_friction
@@ -246,8 +247,8 @@ contains
     type(fr_type),intent(in) :: FR
     real,intent(inout) :: V,O,S,N,Psi
     real,intent(in) :: S0,N0,Dn,D,p
-    real,dimension(6),intent(inout) :: Fm,Fp
-    real,dimension(2),intent(in) :: normal
+    real,intent(out) :: Fhatm(6),Fhatp(6)
+    real,intent(in) :: normal(2),Fm(6),Fp(6)
     character(*),intent(in) :: coupling
     integer,intent(in) :: i
     real,intent(in) :: x,y,t,dt,Zsm,Zsp,Zpm,Zpp,gammam,gammap
@@ -427,8 +428,8 @@ contains
     
     ! rotate back to x-y coordinates
 
-    call rotate_fields_nt2xy(Fp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
-    call rotate_fields_nt2xy(Fm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+    call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
+    call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
 
   end subroutine couple_mode2
 
