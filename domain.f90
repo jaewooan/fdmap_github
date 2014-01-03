@@ -377,8 +377,8 @@ contains
 
   subroutine enforce_edge_conditions(D,initialize)
     
-    use boundaries, only : apply_bc
-    use interfaces, only : couple_blocks
+    use boundaries, only : enforce_boundary_conditions
+    use interfaces, only : enforce_interface_conditions
 
     implicit none
 
@@ -386,20 +386,22 @@ contains
     logical,intent(in) :: initialize
 
     integer :: i,im,ip
+
+    ! set hat variables on all block boundaries
+    ! also set rates for boundary and interface variables
     
-    ! adjust fields on boundaries to satisfy bc
+    ! enforce boundary conditions
     
     do i = 1,D%nblocks
-       call apply_bc(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%mode,D%t,i)
+       call enforce_boundary_conditions(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%mode,D%t,i)
     end do
     
-    ! adjust fields on interfaces to satisfy jump conditions
-    ! (and set state rate)
+    ! enforce interface conditions
     
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call couple_blocks(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t,initialize)
+       call enforce_interface_conditions(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t,initialize)
     end do
     
   end subroutine enforce_edge_conditions

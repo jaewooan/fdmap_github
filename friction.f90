@@ -427,7 +427,7 @@ contains
   end subroutine update_fields_friction
 
 
-  subroutine initial_state(FR,Psi,V,S,N,i,x,y,dt)
+  subroutine initial_state(FR,Psi,V,S,N,i,x,y)
 
     use io, only : error
     use mms, only: inplane_fault_mms
@@ -436,13 +436,12 @@ contains
 
     type(fr_type),intent(in) :: FR
     real,intent(inout) :: Psi
-    real,intent(in) :: V,S,N,x,y,dt
+    real,intent(in) :: V,S,N,x,y
     integer,intent(in) :: i
 
     real :: Vex,Nex,Sex
     character(256) :: str
     type(ratestate_constant) :: rs
-    real :: theta0
 
     select case(FR%friction_law)
     case('frictionless','pseudodynamic','SW')
@@ -451,12 +450,6 @@ contains
     end select
 
     call ratestate_param(i,x,y,FR,rs)
-
-    if (dt>0d0) then
-       theta0 = (rs%L/rs%V0)*exp((Psi-rs%f0)/rs%b)
-       Psi = Psi+rs%b*log(1d0+dt/theta0)
-       return
-    end if
 
     ! set Psi to constant initial value if V = 0
     ! (which probably does not satisfy S = f(V,Psi)*N)
@@ -921,6 +914,32 @@ contains
     end select
 
   end subroutine estimate_V
+
+
+  subroutine set_rates_friction(FR,m,p,x,y,t)
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    integer,intent(in) :: m,p
+    real,intent(in) :: x(m:p),y(m:p),t
+        
+    integer :: i
+
+    select case(FR%friction_law)
+    case('frictionless','pseudodynamic','SW')
+       FR%DPsi = 0d0
+       return
+    end select
+
+    do i = m,p
+       FR%DDs(i) = FR%DDs(i)+FR%V(i) ! shear (tangential) displacement discontinuity rate
+       FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
+       FR%DPsi(i) = FR%DPsi(i)+state_rate(FR,FR%V(i),FR%Psi(i),i,x(i),y(i),t)
+       call rupture_front(FR,FR%D(i),FR%V(i),t,FR%trup(i))
+    end do
+
+  end subroutine set_rates_friction
 
 
   function state_rate(FR,V,Psi,i,x,y,t) result(DPsi)

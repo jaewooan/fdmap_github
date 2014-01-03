@@ -498,7 +498,7 @@ contains
   end subroutine init_boundaries
 
 
-  subroutine apply_bc(G,F,B,mode,t,iblock)
+  subroutine enforce_boundary_conditions(G,F,B,mode,t,iblock)
 
     use grid, only : block_grid
     use fields, only : block_fields
@@ -527,7 +527,7 @@ contains
        if (G%sideT) call apply_bc_side(G%bndT,F%bndFT,G%mx,G%px,B%bcT,B%rhog,mode,t,iblock)
     end if
 
-  end subroutine apply_bc
+  end subroutine enforce_boundary_conditions
 
 
   subroutine apply_bc_side(bndC,bndF,m,p,bc,rhog,mode,t,iblock)
