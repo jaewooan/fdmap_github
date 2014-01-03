@@ -2,9 +2,6 @@ module interfaces
 
   implicit none
 
-  interface lock_interface
-     module procedure lock_interface_mode2,lock_interface_mode3
-  end interface lock_interface
 
 contains
 
@@ -25,10 +22,10 @@ contains
     real,intent(in) :: t
     logical,intent(in) :: initialize
 
-    integer :: j
-    real,parameter :: p=0d0 ! pressure (fix by moving thermal pressurization within friction)
+    !integer :: j
+    !real,parameter :: p=0d0 ! pressure (fix by moving thermal pressurization within friction)
 
-    if (I%skip) return ! process has no cells adjacent to interface
+    if (I%skip) return ! process has no grid points adjacent to interface
 
     ! set hat variables
 
@@ -38,13 +35,13 @@ contains
 
        select case(I%direction)
        case('x')
-          call enforce_locked_interface( &
+          call enforce_locked_interface(I%m,I%p, &
                Fm%bndFR%Fhat(I%m:I%p, : ),Fp%bndFL%Fhat(I%m:I%p, : ), &
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode)
        case('y')
-          call enforce_locked_interface( &
+          call enforce_locked_interface(I%m,I%p, &
                Fm%bndFT%Fhat(I%m:I%p, : ),Fp%bndFB%Fhat(I%m:I%p, : ), &
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
@@ -53,25 +50,41 @@ contains
 
     case('friction')
 
-       do j = I%m,I%p
-          select case(I%direction)
-          case('x')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFR%Fhat(j,:),Fp%bndFL%Fhat(j,:),Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize)
-          case('y')
-             call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
-                  I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
-                  Fm%bndFT%Fhat(j,:),Fp%bndFB%Fhat(j,:),Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
-                  I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
-                  Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize)
-          end select
+       !do j = I%m,I%p
+       !   select case(I%direction)
+       !   case('x')
+       !      call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
+       !           I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
+       !           Fm%bndFR%Fhat(j,:),Fp%bndFL%Fhat(j,:),Fm%bndFR%F(j,:),Fp%bndFL%F(j,:),Fp%F0, &
+       !           I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
+       !           Fm%bndFR%M(j,1:3),Fp%bndFL%M(j,1:3),mode,initialize)
+       !   case('y')
+       !      call couple_points(I%FR,I%FR%V(j),I%FR%O(j),I%FR%S(j),I%FR%N(j), &
+       !           I%FR%S0(j),I%FR%N0(j),I%FR%Dn(j),I%FR%D(j),I%FR%Psi(j),p, &
+       !           Fm%bndFT%Fhat(j,:),Fp%bndFB%Fhat(j,:),Fm%bndFT%F(j,:),Fp%bndFB%F(j,:),Fp%F0, &
+       !           I%nhat(j,:),I%coupling,j,I%x(j),I%y(j),t, &
+       !           Fm%bndFT%M(j,1:3),Fp%bndFB%M(j,1:3),mode,initialize)
+       !   end select
+       !end do
 
-       end do
+       select case(I%direction)
+       case('x')
+          call enforce_frictional_interface(I%m,I%p, &
+               Fm%bndFR%Fhat(I%m:I%p, : ),Fp%bndFL%Fhat(I%m:I%p, : ), &
+               Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
+               Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,Fp%F0,initialize)
+       case('y')
+          call enforce_frictional_interface(I%m,I%p, &
+               Fm%bndFT%Fhat(I%m:I%p, : ),Fp%bndFB%Fhat(I%m:I%p, : ), &
+               Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
+               Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,Fp%F0,initialize)
+       end select
 
-       ! set rates for auxiliary fields (like slip and state variables)
+       ! set rates for auxiliary fields (like slip and state variables),
        ! also calculate rupture time
           
        call set_rates_friction(I%FR,I%m,I%p,I%x(I%m:I%p),I%y(I%m:I%p),t)
@@ -83,23 +96,23 @@ contains
   end subroutine enforce_interface_conditions
 
 
-  subroutine enforce_locked_interface(Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode)
+  subroutine enforce_locked_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode)
 
     implicit none
 
-    real,dimension(:,:),intent(out) :: Fhatm,Fhatp
-    real,dimension(:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
-    integer,intent(in) :: mode
+    integer,intent(in) :: m,p,mode
+    real,dimension(m:,:),intent(out) :: Fhatm,Fhatp
+    real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
 
     integer :: i
 
-    do i = lbound(Fm,1),ubound(Fm,1)
+    do i = m,p
        select case(mode)
        case(2)
-          call lock_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+          call locked_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
                Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3))
        case(3)
-          call lock_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+          call locked_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
                Mm(i,1),Mp(i,1))
        end select
     end do
@@ -107,7 +120,7 @@ contains
   end subroutine enforce_locked_interface
 
 
-  subroutine lock_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp)
+  subroutine locked_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
 
@@ -142,12 +155,11 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vzp,stzFDp,snzp)
     call rotate_fields_nt2xy(Fhatm,normal,vzm,stzFDm,snzm)
-
     
-  end subroutine lock_interface_mode3
+  end subroutine locked_interface_mode3
 
 
-  subroutine lock_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap)
+  subroutine locked_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
 
@@ -172,8 +184,7 @@ contains
     Zpip = 1d0/Zpp
     Zpim = 1d0/Zpm
 
-    etas = 1d0/(Zsip+Zsim)
-    phis = etas*(sntFDp*Zsip+sntFDm*Zsim+vtFDp-vtFDm)
+    ! normal components
 
     etap = 1d0/(Zpip+Zpim)
     phip = etap*(snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm)
@@ -189,6 +200,11 @@ contains
     
     szzp = szzFDp-gammap*(snnFDp-snnp)
     szzm = szzFDm-gammam*(snnFDm-snnm)
+
+    ! shear components
+
+    etas = 1d0/(Zsip+Zsim)
+    phis = etas*(sntFDp*Zsip+sntFDm*Zsim+vtFDp-vtFDm)
        
     sntp = phis
     sntm = phis
@@ -200,7 +216,189 @@ contains
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
     
-  end subroutine lock_interface_mode2
+  end subroutine locked_interface_mode2
+
+
+  subroutine enforce_frictional_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,FR,F0,initialize)
+
+    use friction, only : fr_type
+
+    implicit none
+
+    integer,intent(in) :: m,p,mode
+    real,dimension(m:,:),intent(out) :: Fhatm,Fhatp
+    real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
+    real,dimension(m:),intent(in) :: x,y
+    real,intent(in) :: t,F0(9)
+    type(fr_type),intent(inout) :: FR
+    logical,intent(in) :: initialize
+
+    integer :: i
+
+    do i = m,p
+       select case(mode)
+       case(2)
+          call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,F0,initialize)
+       case(3)
+          call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,F0,initialize)
+       end select
+    end do
+    
+  end subroutine enforce_frictional_interface
+
+
+  subroutine frictional_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,x,y,t,i,FR,F0,initialize)
+
+    use geometry, only : rotate_xy2nt
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use friction, only : fr_type,initial_state,solve_friction,load_stress
+
+    implicit none
+
+    real,intent(out) :: Fhatm(3),Fhatp(3)
+    real,intent(in) :: Fm(3),Fp(3),normal(2),Zsm,Zsp,x,y,t,F0(9)
+    integer,intent(in) :: i
+    type(fr_type),intent(inout) :: FR
+    logical,intent(in) :: initialize
+
+    real :: Zsim,Zsip,phis,etas, &
+         vzp,snzp,vzFDp,snzFDp,stzFDp, &
+         vzm,snzm,vzFDm,snzFDm,stzFDm
+    real :: stt,snt,snn
+    real :: Slock,Nlock
+
+    ! rotate into local normal and tangential coordinates
+
+    call rotate_fields_xy2nt(Fp,normal,vzFDp,stzFDp,snzFDp)
+    call rotate_fields_xy2nt(Fm,normal,vzFDm,stzFDm,snzFDm)
+
+    ! enforce interface conditions
+
+    Zsip = 1d0/Zsp
+    Zsim = 1d0/Zsm
+
+    etas = 1d0/(Zsip+Zsim)
+    phis = etas*(snzFDp*Zsip+snzFDm*Zsim+vzFDp-vzFDm)
+
+    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i)) ! move into friction.f90
+
+    ! normal stress contribution from resolving in-plane stress field onto fault
+    call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
+    Nlock = FR%N0(i)-snn
+
+    Slock = FR%S0(i)+phis
+    
+    FR%O(i) = 0d0
+    FR%N(i) = Nlock
+    
+    if (initialize) then
+       FR%V(i) = vzFDp-vzFDm
+       FR%S(i) = Slock-etas*FR%V(i)
+       call initial_state(FR,i,x,y)
+    end if
+    
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%N(i),Slock,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.)
+
+    snzp = phis
+    snzm = phis
+    vzp = vzFDp+Zsip*(snzFDp-snzp)
+    vzm = vzFDm-Zsim*(snzFDm-snzm)
+
+    ! rotate back to x-y coordinates
+
+    call rotate_fields_nt2xy(Fhatp,normal,vzp,stzFDp,snzp)
+    call rotate_fields_nt2xy(Fhatm,normal,vzm,stzFDm,snzm)
+    
+  end subroutine frictional_interface_mode3
+
+
+  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,F0,initialize)
+
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use friction, only : fr_type,initial_state,solve_friction,load_stress
+    use mms, only : inplane_fault_mms
+
+    implicit none
+
+    real,intent(out) :: Fhatm(6),Fhatp(6)
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,F0(9)
+    integer,intent(in) :: i
+    type(fr_type),intent(inout) :: FR
+    logical,intent(in) :: initialize
+
+    real :: Zsim,Zsip,Zpim,Zpip,phis,phip,etas,etap, &
+         vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+         vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
+    real :: Slock,Nlock
+
+    ! rotate into local normal and tangential coordinates
+
+    call rotate_fields_xy2nt(Fp,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
+    call rotate_fields_xy2nt(Fm,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
+
+    ! enforce interface conditions
+
+    Zsip = 1d0/Zsp
+    Zsim = 1d0/Zsm
+    Zpip = 1d0/Zpp
+    Zpim = 1d0/Zpm
+
+    etas = 1d0/(Zsip+Zsim)
+    phis = etas*(sntFDp*Zsip+sntFDm*Zsim+vtFDp-vtFDm)
+
+    etap = 1d0/(Zpip+Zpim)
+    phip = etap*(snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm)
+
+    ! stresses assuming no additional opening or slip
+    
+    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i)) ! move into friction.f90
+
+    Slock = FR%S0(i)+phis
+    Nlock = FR%N0(i)-phip
+
+    ! normal direction: no opening
+
+    FR%O(i) = 0d0
+    FR%N(i) = Nlock
+
+    ! tangential direction: friction
+
+    if (initialize) then
+       FR%V(i) = vtFDp-vtFDm
+       FR%S(i) = Slock-etas*FR%V(i)
+       call initial_state(FR,i,x,y)
+    end if
+
+    if (FR%friction_law == 'RSL-mms') FR%N(i) = inplane_fault_mms(x,y,t,1,'N')
+
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%N(i),Slock,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.)
+
+    snnp = -(FR%N(i)-FR%N0(i))
+    snnm = -(FR%N(i)-FR%N0(i))
+
+    vnp = vnFDp+Zpip*(snnFDp-snnp)
+    vnm = vnFDm-Zpim*(snnFDm-snnm)
+    
+    sttp = sttFDp-gammap*(snnFDp-snnp)
+    sttm = sttFDm-gammam*(snnFDm-snnm)
+    
+    szzp = szzFDp-gammap*(snnFDp-snnp)
+    szzm = szzFDm-gammam*(snnFDm-snnm)
+    
+    sntp = FR%S(i)-FR%S0(i)
+    sntm = FR%S(i)-FR%S0(i)
+
+    vtp = vtFDp+Zsip*(sntFDp-sntp)
+    vtm = vtFDm-Zsim*(sntFDm-sntm)
+
+    ! rotate back to x-y coordinates
+
+    call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
+    call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+    
+  end subroutine frictional_interface_mode2
 
 
   subroutine couple_blocks(I,Fm,Fp,C,mode,t,initialize)
@@ -290,7 +488,7 @@ contains
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
+    type(fr_type),intent(inout) :: FR
     real,intent(inout) :: V,O,S,N,S0,N0,Psi
     real,intent(in) :: Dn,D,p,Mm(3),Mp(3)
     real,dimension(:),intent(out) :: Fhatm,Fhatp
@@ -333,7 +531,7 @@ contains
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
+    type(fr_type),intent(inout) :: FR
     real,intent(inout) :: V,O,S,N,Psi
     real,intent(in) :: S0,N0,D,p
     real,intent(out) :: Fhatm(3),Fhatp(3)
@@ -391,7 +589,7 @@ contains
        if (initialize) then
           V = vzFDp-vzFDm
           S = Slock-etas*V
-          call initial_state(FR,Psi,V,S,N,i,x,y)
+          call initial_state(FR,i,x,y)
        end if
 
        call solve_friction(FR,V,S,N,Slock,etas,D,Psi,i,x,y,t,.false.)
@@ -429,7 +627,7 @@ contains
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
+    type(fr_type),intent(inout) :: FR
     real,intent(inout) :: V,O,S,N,Psi
     real,intent(in) :: S0,N0,Dn,D,p
     real,intent(out) :: Fhatm(6),Fhatp(6)
@@ -519,7 +717,7 @@ contains
        if (initialize) then
           V = vtFDp-vtFDm
           S = Slock-etas*V
-          call initial_state(FR,Psi,V,S,N,i,x,y)
+          call initial_state(FR,i,x,y)
        end if
        
        if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')

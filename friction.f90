@@ -427,16 +427,15 @@ contains
   end subroutine update_fields_friction
 
 
-  subroutine initial_state(FR,Psi,V,S,N,i,x,y)
+  subroutine initial_state(FR,i,x,y)
 
     use io, only : error
     use mms, only: inplane_fault_mms
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
-    real,intent(inout) :: Psi
-    real,intent(in) :: V,S,N,x,y
+    type(fr_type),intent(inout) :: FR
+    real,intent(in) :: x,y
     integer,intent(in) :: i
 
     real :: Vex,Nex,Sex
@@ -445,23 +444,23 @@ contains
 
     select case(FR%friction_law)
     case('frictionless','pseudodynamic','SW')
-       Psi = 0d0
+       FR%Psi(i) = 0d0
        return
     end select
 
-    call ratestate_param(i,x,y,FR,rs)
+    call ratestate_param(i,x,y,FR,rs) ! frictional parameters at point i
 
     ! set Psi to constant initial value if V = 0
     ! (which probably does not satisfy S = f(V,Psi)*N)
 
     select case(FR%problem)
     case default
-       if (abs(V)==0d0) then
-          Psi = FR%Psi0
+       if (abs(FR%V(i))==0d0) then
+          FR%Psi(i) = FR%Psi0
           return
        end if
     case('tpv105')
-       Psi = rs%a*log((2d0*rs%V0/1d-16)*sinh(FR%f_S0/(rs%a*N)))
+       FR%Psi(i) = rs%a*log((2d0*rs%V0/1d-16)*sinh(FR%f_S0/(rs%a*FR%N(i))))
        return
     end select
 
@@ -469,27 +468,27 @@ contains
 
     select case(FR%friction_law)
     case('SL','FL')
-       Psi = abs(S/N)-rs%a*log(abs(V)/rs%V0)
+       FR%Psi(i) = abs(FR%S(i)/FR%N(i))-rs%a*log(abs(FR%V(i))/rs%V0)
     case('RSL','RFL','RSF')
-       if (V*S<0d0) then
-          write(str,*) 'Incompatible signs: V = ',V,' S = ',S,' at x = ',x,', y = ',y
+       if (FR%V(i)*FR%S(i)<0d0) then
+          write(str,*) 'Incompatible signs: V = ',FR%V(i),' S = ',FR%S(i),' at x = ',x,', y = ',y
           call error(str,'initial_state')
        else
-          Psi = rs%a*log(2d0*rs%V0/V*sinh(S/(rs%a*N)))
+          FR%Psi(i) = rs%a*log(2d0*rs%V0/FR%V(i)*sinh(FR%S(i)/(rs%a*FR%N(i))))
        end if
     case('RSL-mms','RSL-mms-nostate')
-       if (V*S<0d0) then
-          write(str,*) 'Incompatible signs: V = ',V,' S = ',S,' at x = ',x,', y = ',y
+       if (FR%V(i)*FR%S(i)<0d0) then
+          write(str,*) 'Incompatible signs: V = ',FR%V(i),' S = ',FR%S(i),' at x = ',x,', y = ',y
           call error(str,'initial_state')
        else
           Vex = inplane_fault_mms(x,y,0d0,1,'V')
           Sex = inplane_fault_mms(x,y,0d0,1,'S')
           Nex = inplane_fault_mms(x,y,0d0,1,'N')
-          Psi = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*Nex))/Vex)
-          Psi = 0d0
+          FR%Psi(i) = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*Nex))/Vex)
+          FR%Psi(i) = 0d0
        end if
     case default
-       Psi = 0d0
+       FR%Psi(i) = 0d0
     end select
 
   end subroutine initial_state
