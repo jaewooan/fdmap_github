@@ -114,7 +114,6 @@ contains
     FR%force = force
     FR%friction_law = friction_law
     FR%problem = problem
-    FR%Psi0 = Psi0
     FR%f_S0 = S0
     FR%angle = 0.017453292519943d0*angle ! convert deg to rad
     FR%kn = kn
@@ -154,7 +153,7 @@ contains
 
        case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
 
-          call write_matlab(echo,'Psi0',FR%Psi0,FRstr)
+          call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
           call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
           call write_matlab(echo,'rs.V0',rs%V0,FRstr)
@@ -222,7 +221,7 @@ contains
     
     allocate(FR%Psi(m:p),FR%DPsi(m:p),FR%D(m:p),FR%trup(m:p))
 
-    FR%Psi  = 1d40
+    FR%Psi  = Psi0
     FR%DPsi = 1d40
     FR%D = 0d0
     FR%trup = 1d10
@@ -327,6 +326,7 @@ contains
        call read_file_distributed(fh,FR%rs%L )
        call read_file_distributed(fh,FR%rs%fw)
        call read_file_distributed(fh,FR%rs%Vw)
+       ! could add initial state: call read_file_distributed(fh,FR%Psi)
 
     case('SW')
 
@@ -427,97 +427,46 @@ contains
   end subroutine update_fields_friction
 
 
-  subroutine initial_state(FR,i,x,y)
-
-    use io, only : error
-    use mms, only: inplane_fault_mms
-
-    implicit none
-
-    type(fr_type),intent(inout) :: FR
-    real,intent(in) :: x,y
-    integer,intent(in) :: i
-
-    real :: Vex,Nex,Sex
-    character(256) :: str
-    type(ratestate_constant) :: rs
-
-    select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
-       FR%Psi(i) = 0d0
-       return
-    end select
-
-    call ratestate_param(i,x,y,FR,rs) ! frictional parameters at point i
-
-    ! set Psi to constant initial value if V = 0
-    ! (which probably does not satisfy S = f(V,Psi)*N)
-
-    select case(FR%problem)
-    case default
-       if (abs(FR%V(i))==0d0) then
-          FR%Psi(i) = FR%Psi0
-          return
-       end if
-    case('tpv105')
-       FR%Psi(i) = rs%a*log((2d0*rs%V0/1d-16)*sinh(FR%f_S0/(rs%a*FR%N(i))))
-       return
-    end select
-
-    ! otherwise set Psi such that S = f(V,Psi)*N
-
-    select case(FR%friction_law)
-    case('SL','FL')
-       FR%Psi(i) = abs(FR%S(i)/FR%N(i))-rs%a*log(abs(FR%V(i))/rs%V0)
-    case('RSL','RFL','RSF')
-       if (FR%V(i)*FR%S(i)<0d0) then
-          write(str,*) 'Incompatible signs: V = ',FR%V(i),' S = ',FR%S(i),' at x = ',x,', y = ',y
-          call error(str,'initial_state')
-       else
-          FR%Psi(i) = rs%a*log(2d0*rs%V0/FR%V(i)*sinh(FR%S(i)/(rs%a*FR%N(i))))
-       end if
-    case('RSL-mms','RSL-mms-nostate')
-       if (FR%V(i)*FR%S(i)<0d0) then
-          write(str,*) 'Incompatible signs: V = ',FR%V(i),' S = ',FR%S(i),' at x = ',x,', y = ',y
-          call error(str,'initial_state')
-       else
-          Vex = inplane_fault_mms(x,y,0d0,1,'V')
-          Sex = inplane_fault_mms(x,y,0d0,1,'S')
-          Nex = inplane_fault_mms(x,y,0d0,1,'N')
-          FR%Psi(i) = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*Nex))/Vex)
-          FR%Psi(i) = 0d0
-       end if
-    case default
-       FR%Psi(i) = 0d0
-    end select
-
-  end subroutine initial_state
-
-
-  subroutine solve_friction(FR,V,S,N,Slock,eta,D,Psi,i,x,y,t,info)
+  subroutine solve_friction(FR,V,S,O,N,phip,phis,eta,D,Psi,i,x,y,t,info)
 
     use mms, only : bessel,inplane_fault_mms
     use io, only : error
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
-    real,intent(inout) :: V,S
-    real,intent(in) :: N,Slock,eta,D,Psi,x,y,t
+    type(fr_type),intent(inout) :: FR
+    real,intent(inout) :: V,S,O,N
+    real,intent(in) :: phip,phis,eta,D,Psi,x,y,t
     integer,intent(in) :: i
     logical,intent(in) :: info
 
     logical :: fail
-    real :: Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
+    real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
+
+    ! loads (stresses acting on fault in absence of any slip)
+
+    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i))
+
+    ! stress on fault in absence of active slipping and opening
+
+    Slock = FR%S0(i)+phis
+    Nlock = FR%N0(i)-phip
+
+    ! fault normal stress and opening rate (no opening condition)
+
+    O = 0d0
+    N = Nlock
+
+    if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')
 
     ! lock fault outside specified region, specified in rotated coordinates
     
     xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
 
-    if (xx<FR%xlockm.or.xx>FR%xlockp) then
-       S = FR%flock*N
+    if (xx<FR%xlockm.or.xx>FR%xlockp) then ! point is outside
+       S = FR%flock*N ! fault strength
        if (abs(Slock)>=S) then ! slipping
           S = sign(S,Slock)
           V = (Slock-S)/eta

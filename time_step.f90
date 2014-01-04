@@ -105,7 +105,7 @@ contains
        ! also, set rates on interfaces
 
        call prepare_edges(D)
-       call enforce_edge_conditions(D,initialize=.false.)
+       call enforce_edge_conditions(D)
        
        ! set rates (except interfaces)
 
