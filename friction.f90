@@ -459,8 +459,6 @@ contains
     O = 0d0
     N = Nlock
 
-    if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')
-
     ! lock fault outside specified region, specified in rotated coordinates
     
     xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
@@ -559,6 +557,8 @@ contains
 
        call ratestate_param(i,x,y,FR,rs)
 
+       if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')
+
        ! solve nonlinear equation with Newton's method
 
        select case(FR%problem)
@@ -615,31 +615,7 @@ contains
     type(fr_type),intent(in) :: FR
     type(slipweak_constant),intent(out) :: sw
 
-    real :: dip
-    real,parameter :: tol = 100d0*epsilon(x)
-
-    ! unmodified parameters
-    
     sw = slipweak_constant(FR%sw%c0(i),FR%sw%fs(i),FR%sw%fd(i),FR%sw%Dc(i))
-
-    select case(FR%problem)
-    case('TPV5','TPV205')
-       ! barrier at ends
-       if (abs(x)>15d0+tol) sw%c0 = 1d10
-    case('TPV10','TPV11','TPV210')
-       dip = 2d0*x
-       ! barrier at depth
-       if (dip>15d0+tol) sw%c0 = 1d10
-    case('TPV12','TPV13','TPV12alt','TPV13alt')
-       dip = 2d0*x
-       ! reduced friction coefficient inside nucleation region
-       sw%fs = boxcar(dip-12d0,1.5d0,0.54d0,0.7d0)
-       ! barrier at depth
-       if (dip>15d0+tol) sw%c0 = 1d10
-    case('TPV14BRANCH','TPV15BRANCH','TPV14bBRANCH','TPV15bBRANCH')
-       ! first node on the branch is locked
-       if (x**2+y**2<tol) sw%c0 = 1d10
-    end select
 
   end subroutine slipweak_param
 
@@ -655,21 +631,8 @@ contains
     type(fr_type),intent(in) :: FR
     type(ratestate_constant),intent(out) :: rs
 
-    ! unmodified parameters
-
     rs = ratestate_constant(FR%rs%a(i),FR%rs%b(i),FR%rs%V0(i), &
          FR%rs%f0(i),FR%rs%L(i),FR%rs%fw(i),FR%rs%Vw(i))
-    
-    ! modification for specific problems
-
-    select case(FR%problem)
-    case('rough-old') ! increase in a and Vw with decreasing x
-       rs%a = rs%a+0.008d0*max(0d0,min(1d0,-(x+6d0)/6d0))
-       rs%Vw = rs%Vw+5d0*max(0d0,-(x+6d0)/6d0)
-    case('tpv105')
-       rs%a  = rs%a +smooth_boxcar(abs(x),15d0,3d0,0d0,0.01d0)
-       rs%Vw = rs%Vw+smooth_boxcar(abs(x),15d0,3d0,0d0, 0.9d0)
-    end select
 
   end subroutine ratestate_param
 
@@ -691,6 +654,8 @@ contains
     integer :: i
     integer,parameter :: imax=99
     real :: inV,inS,Vmin,Vmax,dSdV,Sf,dSfdV,dV,R,dRdV
+
+    ! relative and absolute error tolerances for Newton solver
     !real,parameter :: rtolV=0d-12, atolV=0d0, atolR=1d-14
     !real,parameter :: rtolV=1d-12, atolV=0d-20, atolR=1d-12
     !real,parameter :: rtolV=1d-12, atolV=0d0, atolR=epsilon(1d0)*1d4
@@ -893,6 +858,7 @@ contains
   function state_rate(FR,V,Psi,i,x,y,t) result(DPsi)
 
     use mms, only : inplane_fault_mms
+    use io, only : error
 
     implicit none
 
@@ -905,12 +871,7 @@ contains
     real :: absV,frs,fss,fLV,Psiss,Hmss
     type(ratestate_constant) :: rs
 
-    if (V==0d0) then
-       DPsi = 0d0
-       return
-    end if
-
-    absV = abs(V)
+    ! state evolution not required for some friction laws
 
     select case(FR%friction_law)
     case('frictionless','pseudodynamic','SW')
@@ -918,7 +879,18 @@ contains
        return
     end select
 
+    ! handle special case that might cause floating point error
+
+    if (V==0d0) then
+       DPsi = 0d0
+       return
+    end if
+
+    ! set state rate for rate-and-state friction laws
+
     call ratestate_param(i,x,y,FR,rs)
+
+    absV = abs(V)
 
     select case(FR%friction_law)
 
@@ -934,16 +906,8 @@ contains
        
        fLV = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
        fss = rs%fw+(fLV-rs%fw)/(1d0+(V/rs%Vw)**8)**0.125d0
-       !fss = rs%fw+(fLV-rs%fw)/sqrt(1d0+(V/rs%Vw)**2)
-
-       !if (absV<rs%Vw) then
-       !   fss = fLV
-       !else
-       !   fss = rs%fw+(fLV-rs%fw)*rs%Vw/absV
-       !end if
 
        DPsi = -(absV/rs%L)*(frs-fss)
-
 
     case('RSL','RSL-mms-nostate')
 
@@ -985,13 +949,6 @@ contains
 
        fLV = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
        fss = rs%fw+(fLV-rs%fw)/(1d0+(V/rs%Vw)**8)**0.125d0
-
-!!$       if (absV<rs%Vw) then
-!!$          fss = fLV
-!!$       else
-!!$          fss = rs%fw+(fLV-rs%fw)*rs%Vw/absV
-!!$       end if
-
        frs = rs%a*arcsinh(0.5d0*absV/rs%V0*exp(Psi/rs%a))
        DPsi = (absV/rs%L)*(fss-frs)
 
@@ -1004,7 +961,7 @@ contains
 
     case default
 
-       DPsi = 0d0
+       call error('Invalid friction law','state_rate')
 
     end select
 
@@ -1164,7 +1121,6 @@ contains
        N0 = 0d0
        S0 = -78d0
 
-
     ! alt only matters for the branch
     case('TPV14b','TPV14balt')
 
@@ -1188,63 +1144,6 @@ contains
 
        N0 = 0d0
        S0 = 0d0
-
-    case('shaw_coon') ! linear decrease in stress outside region
-
-       r = abs(x/FR%ld%R)
-       A = smooth(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = FR%ld%S*A*B
-       if (abs(x)>10d0) S0 = S0-1d0*(abs(x)-10d0)
-       N0 = FR%ld%N*A*B
-
-    case('unilateral') ! drop stress to left for unilateral pulse
-
-       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
-       r = abs((xx-FR%ld%x0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = FR%ld%S*A*B+min(0d0,FR%uni_dSdx*(xx+FR%uni_x0))
-       N0 = FR%ld%N*A*B
-
-    case('gaussian_time') ! shear stress carried by incident Gaussian pulse
-
-       A = gaussian(3d0*t-10d0,1d0,1d0,0d0)
-       S0 = FR%ld%S*A
-       N0 = FR%ld%N*A
-
-    case('dip7deg')
-
-       S0 = 2.16d0
-       N0 = 4.78d0
-       S0 = S0+boxcar(abs(x+60.4781d0),15d0,0.72d0,0d0)
-
-    case('BU')
-
-       S0 = -2.1d0*y
-       N0 = -7.2d0*y
-
-       r = abs((y-FR%ld%y0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = S0+FR%ld%S*A*B
-       N0 = N0+FR%ld%N*A*B
-
-    case('SB')
-       
-       S0 = 22.2d0-10.09d0*y
-       N0 = 37.0d0-16.82d0*y
-       
-       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault       
-       r = abs((xx-FR%ld%x0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-       
-       S0 = S0+FR%ld%S*A*B
-       N0 = N0+FR%ld%N*A*B
 
     end select
 
