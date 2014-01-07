@@ -2,7 +2,7 @@ module boundaries
 
   use friction, only : fr_type
   use thermpres, only : tp_type
-  use erupt, only : er_type
+  use hydrofrac, only : hf_type
 
   implicit none
 
@@ -19,7 +19,7 @@ module boundaries
           rank_m,rank_p,comm_m,comm_p,comm_mp,comm,array_w,array_s
      type(fr_type) :: FR
      type(tp_type) :: TP
-     type(er_type) :: ER
+     type(hf_type) :: HF
      real,dimension(:),allocatable :: x,y,dl
      real,dimension(:,:),allocatable :: nhat
   end type iface_type
@@ -236,7 +236,7 @@ contains
 
     use friction, only : init_friction
     use thermpres, only : init_thermpres
-    use erupt, only : init_erupt
+    use hydrofrac, only : init_hydrofrac
 
     implicit none
 
@@ -249,16 +249,8 @@ contains
     call init_friction( iface,I%FR,I%m,I%p,input,echo,I%skip, &
          I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
     call init_thermpres(iface,I%TP,I%m,I%p,input,echo,I%skip,refine,dt)
-    if (I%skip) then
-       ! commented this because I%x was not always allocated (DEBUG THIS)
-       ! could use allocatable attribute when passing x,y,dl to init_erupt
-       ! another idea is to always allocate I%x, but with zero length when I%skip=true
-       !call init_erupt( iface,I%ER,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
-       !     I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w) ! otherwise error since dl not allocated
-    else
-       call init_erupt( iface,I%ER,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
-            I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w,I%dl)
-    end if
+    call init_hydrofrac(iface,I%HF,I%m,I%p,I%x,I%y,input,echo,I%skip,I%direction,I%mg,I%pg, &
+         I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
 
   end subroutine init_iface_fields
 
@@ -267,7 +259,7 @@ contains
 
     use friction, only : destroy_friction
     use thermpres, only : destroy_thermpres
-    use erupt, only : destroy_erupt
+    use hydrofrac, only : destroy_hydrofrac
 
     implicit none
 
@@ -280,7 +272,7 @@ contains
 
     call destroy_friction( I%FR)
     call destroy_thermpres(I%TP)
-    call destroy_erupt(    I%ER)
+    call destroy_hydrofrac(I%HF)
 
   end subroutine destroy_iface
   
@@ -289,7 +281,7 @@ contains
 
     use friction, only : checkpoint_friction
     use thermpres, only : checkpoint_thermpres
-    use erupt, only : checkpoint_erupt
+    use hydrofrac, only : checkpoint_hydrofrac
     use io, only : file_distributed,open_file_distributed, &
          read_file_distributed,write_file_distributed,close_file_distributed
     use mpi_routines, only : pw,is_master
@@ -316,8 +308,6 @@ contains
 
        if (operation=='delete') then
           if (is_master) call MPI_File_delete(filename,MPI_INFO_NULL,ierr)
-          if (I%coupling=='friction') call checkpoint_thermpres(operation,name, &
-               checkpoint_number,iface,side,I%TP)
           if (side==2) return
           cycle
        end if
@@ -336,12 +326,14 @@ contains
        call MPI_Barrier(MPI_COMM_WORLD,ierr)
        
        if (io_process) then
-          if (I%coupling=='friction') call checkpoint_friction(fh,operation,I%FR)
-          call checkpoint_erupt(fh,operation,I%ER)
+          select case(I%coupling)
+          case('friction') 
+             call checkpoint_friction(fh,operation,I%FR)
+             !call checkpoint_thermpres(fh,operation,I%TP) ! NOT IMPLEMENTED YET
+          case('hydrofrac')
+             call checkpoint_hydrofrac(fh,operation,I%HF)
+          end select
        end if
-
-       if (I%coupling=='friction') call checkpoint_thermpres(operation,name, &
-            checkpoint_number,iface,side,I%TP,comm,io_process)
 
        call MPI_Barrier(MPI_COMM_WORLD,ierr)
        
@@ -360,7 +352,7 @@ contains
   subroutine scale_rates_iface(I,A)
 
     use friction, only : scale_rates_friction
-    use erupt, only : scale_rates_erupt
+    use hydrofrac, only : scale_rates_hydrofrac
 
     implicit none
 
@@ -371,9 +363,9 @@ contains
 
     select case(I%coupling)
     case('friction')
-       call scale_rates_friction(I%FR,A)
-    case('eruption')
-       call scale_rates_erupt(   I%ER,A)
+       call scale_rates_friction (I%FR,A)
+    case('hydrofrac')
+       call scale_rates_hydrofrac(I%HF,A)
     end select
 
   end subroutine scale_rates_iface
@@ -382,6 +374,7 @@ contains
   subroutine update_fields_iface(I,dt)
 
     use friction, only : update_fields_friction
+    use hydrofrac, only : update_fields_hydrofrac
 
     implicit none
 
@@ -392,9 +385,9 @@ contains
 
     select case(I%coupling)
     case('friction')
-       call update_fields_friction(I%FR,dt)
-    case('eruption')
-       !JK call update_fields_erupt(I%ER,dt,I%FR%DDn(I%m:I%p))
+       call update_fields_friction (I%FR,dt)
+    case('hydrofrac')
+       call update_fields_hydrofrac(I%HF,dt)
     end select
 
   end subroutine update_fields_iface

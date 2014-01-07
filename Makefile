@@ -92,8 +92,8 @@ endif
 # Files
 
 Files = boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
-	erupt.f90 interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
-	geometry.f90 grid.f90 io.f90 main.f90 material.f90 \
+	interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
+	geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
 	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \
 	rates.f90 rates_heterogeneous.f90 source.f90 thermpres.f90 \
 	time_step.f90 utilities.f90
@@ -135,20 +135,16 @@ notintel:
 .SUFFIXES: .o .f90
 
 # DO NOT DELETE THIS LINE - used by make depend
-boundaries.o: erupt.o fields.o friction.o geometry.o grid.o io.o mms.o
+boundaries.o: fields.o friction.o geometry.o grid.o hydrofrac.o io.o mms.o
 boundaries.o: mpi_routines.o mpi_routines2d.o thermpres.o
 
 checkpoint.o: boundaries.o domain.o fields.o io.o mpi_routines.o
 
-domain.o: boundaries.o interfaces.o fd_coeff.o fields.o grid.o io.o material.o
+domain.o: boundaries.o fd_coeff.o fields.o grid.o interfaces.o io.o material.o
 domain.o: mpi_routines.o mpi_routines2d.o source.o utilities.o
 
-energy.o: domain.o fields.o grid.o material.o mpi_routines.o mpi_routines2d.o
-
-erupt.o: fd.o fd_coeff.o io.o mpi_routines.o mpi_routines2d.o utilities.o
-
-interfaces.o: boundaries.o erupt.o fields.o friction.o geometry.o io.o mms.o
-interfaces.o: mpi_routines2d.o thermpres.o
+energy.o: domain.o fields.o geometry.o grid.o material.o mpi_routines.o
+energy.o: mpi_routines2d.o
 
 fd.o: fd_coeff.o io.o
 
@@ -163,6 +159,11 @@ geometry.o: io.o
 
 grid.o: fd.o fd_coeff.o geometry.o io.o mpi_routines.o mpi_routines2d.o
 grid.o: utilities.o
+
+hydrofrac.o: fd.o fd_coeff.o io.o mpi_routines.o mpi_routines2d.o
+
+interfaces.o: boundaries.o fields.o friction.o geometry.o mpi_routines2d.o
+interfaces.o: thermpres.o
 
 io.o: mpi_routines.o
 

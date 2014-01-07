@@ -237,7 +237,7 @@ contains
     if (.not.TP%use_TP) return
 
     write(filename,'(a,i0,a,i0,a,i0)') trim(adjustl(name)) // &
-         'iface',iface,'side',side,'ER.ckpt',checkpoint_number
+         'iface',iface,'side',side,'TP.ckpt',checkpoint_number
 
     if (operation=='delete') then
        if (is_master) call MPI_File_delete(filename,MPI_INFO_NULL,ierr)

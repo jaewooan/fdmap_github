@@ -12,6 +12,7 @@ contains
     use fields, only : block_fields
     use mpi_routines2d, only : cartesian
     use friction, only : set_rates_friction
+    use hydrofrac, only : set_rates_hydrofrac
 
     implicit none
 
@@ -23,11 +24,13 @@ contains
 
     if (I%skip) return ! process has no grid points adjacent to interface
 
-    ! set hat variables
+    ! set hat variables Fhat for different interface conditions
 
     select case(I%coupling)
 
     case('locked')
+
+       ! locked (or welded) interface: no opening or slip
 
        select case(I%direction)
        case('x')
@@ -45,6 +48,10 @@ contains
        end select
 
     case('friction')
+
+       ! enforce friction law by solving elasticity+friction for 
+       ! slip velocity, shear stress, opening velocity (assumed zero for no opening),
+       ! and normal stress; those interface fields are stored within FR (friction type)
 
        select case(I%direction)
        case('x')
@@ -67,6 +74,33 @@ contains
        ! also calculate rupture time
           
        call set_rates_friction(I%FR,I%m,I%p,I%x(I%m:I%p),I%y(I%m:I%p),t)
+
+    case('hydrofrac')
+
+       ! set hat variables (Fhat) by balancing fluid and solid tractions
+       ! and matching fluid and solid velocities
+
+       select case(I%direction)
+       case('x')
+          call enforce_hydrofrac_interface(I%m,I%p, &
+               Fm%bndFR%Fhat(I%m:I%p, : ),Fp%bndFL%Fhat(I%m:I%p, : ), &
+               Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
+               Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF)
+       case('y')
+          call enforce_hydrofrac_interface(I%m,I%p, &
+               Fm%bndFT%Fhat(I%m:I%p, : ),Fp%bndFB%Fhat(I%m:I%p, : ), &
+               Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
+               Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF)
+       end select
+
+       ! set rates for auxiliary fields (like slip and state variables),
+       ! also calculate rupture time
+          
+       call set_rates_hydrofrac(I%HF,C,I%comm_mp,I%m,I%p,I%x(I%m:I%p),I%y(I%m:I%p),t)
 
     end select
 
@@ -217,7 +251,7 @@ contains
        select case(mode)
        case(2)
           call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,F0)
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP)
        case(3)
           call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
                Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,TP,F0)
@@ -298,7 +332,7 @@ contains
   end subroutine frictional_interface_mode3
 
 
-  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,F0)
+  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use friction, only : fr_type,solve_friction
@@ -307,7 +341,7 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(6),Fhatp(6)
-    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,F0(9)
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
@@ -335,7 +369,7 @@ contains
     ! 6. snnp = snnm
     !    (continuity of normal stress)
     !
-    ! 1-3 yield equation of form snn = phip-Zp*O with
+    ! 4-6 yield equation of form snn = phip-Zp*O with
     ! phip = etap*(snnFDp/Zpp+snnFDm/Zpm+vnFDp-vnFDm),
     ! O = vnp-vnm, and 1/etap = 1/Zpp+1/Zpm
 
@@ -391,6 +425,117 @@ contains
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
     
   end subroutine frictional_interface_mode2
+
+
+  subroutine enforce_hydrofrac_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,HF)
+
+    use hydrofrac, only : hf_type
+    use io, only : error
+
+    implicit none
+
+    integer,intent(in) :: m,p,mode
+    real,dimension(m:,:),intent(out) :: Fhatm,Fhatp
+    real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
+    real,dimension(m:),intent(in) :: x,y
+    real,intent(in) :: t
+    type(hf_type),intent(inout) :: HF
+
+    integer :: i
+
+    do i = m,p
+       select case(mode)
+       case(2)
+          call hydrofrac_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,HF)
+       case(3)
+          call error('No hydraulic fractures in antiplane shear','enforce_hydrofrac_interface')
+       end select
+    end do
+    
+  end subroutine enforce_hydrofrac_interface
+
+
+  subroutine hydrofrac_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,HF)
+
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use hydrofrac, only : hf_type,fluid_stresses,wall_velocities
+
+    implicit none
+
+    real,intent(out) :: Fhatm(6),Fhatp(6)
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
+    integer,intent(in) :: i
+    type(hf_type),intent(inout) :: HF
+
+    real :: Zsim,Zsip,Zpim,Zpip, &
+         vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+         vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
+    real :: taum,taup,p
+
+    ! 1. sntp+Zsp*vtp = sntFDp+Zsp*vtFDp 
+    !    (S-wave into interface from plus  side)
+    ! 2. sntm-Zsm*vtm = sntFDm-Zsm*vtFDm 
+    !    (S-wave into interface from minus side)
+    ! 3. sntp = taup (wall shear stress, plus  side)
+    ! 4. sntm = taum (wall shear stress, minus side)
+    !
+    ! 5. snnp+Zpp*vnp = snnFDp+Zpp*vnFDp 
+    !    (P-wave into interface from plus  side)
+    ! 6. snnm-Zpm*vnm = snnFDm-Zpm*vnFDm 
+    !    (P-wave into interface from minus side)
+    ! 7. snnp = -p (fluid pressure)
+    ! 8. snnm = -p (fluid pressure)
+    !    (continuity of normal stress)
+
+    ! rotate into local normal and tangential coordinates
+
+    call rotate_fields_xy2nt(Fp,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
+    call rotate_fields_xy2nt(Fm,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
+
+    ! reciprocal impedances
+
+    Zsip = 1d0/Zsp
+    Zsim = 1d0/Zsm
+    Zpip = 1d0/Zpp
+    Zpim = 1d0/Zpm
+
+    ! shear and normal tractions exerted by the fluid on the solid walls
+
+    call fluid_stresses(HF,i,p,taum,taup)
+
+    ! balance normal tractions
+
+    snnp = -p
+    snnm = -p
+
+    vnp = vnFDp+Zpip*(snnFDp-snnp)
+    vnm = vnFDm-Zpim*(snnFDm-snnm)
+    
+    sttp = sttFDp-gammap*(snnFDp-snnp)
+    sttm = sttFDm-gammam*(snnFDm-snnm)
+    
+    szzp = szzFDp-gammap*(snnFDp-snnp)
+    szzm = szzFDm-gammam*(snnFDm-snnm)
+    
+    ! balance shear tractions
+
+    sntp = taup
+    sntm = taum
+
+    vtp = vtFDp+Zsip*(sntFDp-sntp)
+    vtm = vtFDm-Zsim*(sntFDm-sntm)
+
+    ! rotate back to x-y coordinates
+
+    call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
+    call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+
+    ! use hat variable wall velocities to set rates of opening/closing
+
+    call wall_velocities(HF,i,vnm,vnp)
+    
+  end subroutine hydrofrac_interface_mode2
 
 
 end module interfaces
