@@ -3,7 +3,8 @@ module domain
   use material, only : block_material,elastic_type
   use grid, only : block_grid,grid_type
   use fields, only : block_fields,fields_type
-  use boundaries, only : block_boundaries,iface_type
+  use boundaries, only : block_boundaries
+  use interfaces, only : iface_type
   use mpi_routines2d, only : cartesian
   use source, only : source_type
 
@@ -42,8 +43,8 @@ contains
     use material, only : init_material,init_pml
     use grid, only : read_grid,block_limits,init_grid,init_grid_partials
     use fields, only : init_fields,exchange_fields
-    use boundaries, only : init_iface,init_iface_blocks,init_iface_fields, &
-         init_boundaries
+    use interfaces, only : init_iface,init_iface_blocks,init_iface_fields
+    use boundaries, only : init_boundaries
     use fd_coeff, only : init_fd
     use source , only : init_source
     use mpi_routines2d, only : decompose2d,exchange_all_neighbors
@@ -282,7 +283,7 @@ contains
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call init_iface_fields(i,D%I(i),refine,input,echo,dtRK)
+       call init_iface_fields(i,D%I(i),D%G%hmin,D%G%hmax,refine,input,echo,dtRK)
     end do
 
     ! enforce boundary and interface conditions (set hat variables)
@@ -328,7 +329,7 @@ contains
     use grid, only : destroy_grid
     use fields, only : destroy_block_fields,destroy_fields
     use material, only : destroy_elastic
-    use boundaries, only : destroy_iface
+    use interfaces, only : destroy_iface
 
     implicit none
 
@@ -408,7 +409,7 @@ contains
 
   subroutine check_nucleation(D,minV,slipping)
 
-    use boundaries, only : maxV
+    use interfaces, only : maxV
     use mpi_routines, only : MPI_REAL_PW
     use mpi
 
@@ -543,19 +544,9 @@ contains
        case('N')
           call write_file_distributed(fh,D%I(i)%FR%N(my:py:sy))
        case('a')
-          select case(D%I(i)%coupling)
-          case('friction')
-             call write_file_distributed(fh,D%I(i)%FR%rs%a(my:py:sy))
-          case('hydrofrac')
-             call write_file_distributed(fh,D%I(i)%HF%a(my:py:sy))
-          end select
+          call write_file_distributed(fh,D%I(i)%FR%rs%a(my:py:sy))
        case('b')
-          select case(D%I(i)%coupling)
-          case('friction')
-             call write_file_distributed(fh,D%I(i)%FR%rs%b(my:py:sy))
-          case('hydrofrac')
-             call write_file_distributed(fh,D%I(i)%HF%b(my:py:sy))
-          end select
+          call write_file_distributed(fh,D%I(i)%FR%rs%b(my:py:sy))
        case('L')
           call write_file_distributed(fh,D%I(i)%FR%rs%L(my:py:sy))
        case('V0')
@@ -586,10 +577,16 @@ contains
           call write_file_distributed(fh,D%I(i)%TP%T(mx:px:sx,my:py:sy))
        case('P')
           call write_file_distributed(fh,D%I(i)%TP%p(mx:px:sx,my:py:sy))
+       case('wm')
+          call write_file_distributed(fh,D%I(i)%HF%wm(my:py:sy))
+       case('wp')
+          call write_file_distributed(fh,D%I(i)%HF%wp(my:py:sy))
        case('p')
           call write_file_distributed(fh,D%I(i)%HF%p(my:py:sy))
        case('u')
           call write_file_distributed(fh,D%I(i)%HF%u(my:py:sy))
+       case('v')
+          call write_file_distributed(fh,D%I(i)%HF%v(mx:px:sx,my:py:sy))
        end select
 
     case('ifacey','point_ifacey')
@@ -610,19 +607,9 @@ contains
        case('N')
           call write_file_distributed(fh,D%I(i)%FR%N(mx:px:sx))
        case('a')
-          select case(D%I(i)%coupling)
-          case('friction')
-             call write_file_distributed(fh,D%I(i)%FR%rs%a(mx:px:sx))
-          case('hydrofrac')
-             call write_file_distributed(fh,D%I(i)%HF%a(mx:px:sx))
-          end select
+          call write_file_distributed(fh,D%I(i)%FR%rs%a(mx:px:sx))
        case('b')
-          select case(D%I(i)%coupling)
-          case('friction')
-             call write_file_distributed(fh,D%I(i)%FR%rs%b(mx:px:sx))
-          case('hydrofrac')
-             call write_file_distributed(fh,D%I(i)%HF%b(mx:px:sx))
-          end select
+          call write_file_distributed(fh,D%I(i)%FR%rs%b(mx:px:sx))
        case('L')
           call write_file_distributed(fh,D%I(i)%FR%rs%L(mx:px:sx))
        case('V0')
@@ -653,10 +640,16 @@ contains
           call write_file_distributed(fh,transpose(D%I(i)%TP%T(my:py:sy,mx:px:sx)))
        case('P')
           call write_file_distributed(fh,transpose(D%I(i)%TP%p(my:py:sy,mx:px:sx)))
+       case('wm')
+          call write_file_distributed(fh,D%I(i)%HF%wm(mx:px:sx))
+       case('wp')
+          call write_file_distributed(fh,D%I(i)%HF%wp(mx:px:sx))
        case('p')
           call write_file_distributed(fh,D%I(i)%HF%p(mx:px:sx))
        case('u')
           call write_file_distributed(fh,D%I(i)%HF%u(mx:px:sx))
+       case('v')
+          call write_file_distributed(fh,transpose(D%I(i)%HF%v(my:py:sy,mx:px:sx)))
        end select
 
     case('bndL')
@@ -879,19 +872,9 @@ contains
        case('N')
           ok = allocated(D%I(i)%FR%N)
        case('a')
-          select case(D%I(i)%coupling)
-          case('friction')
-             ok = allocated(D%I(i)%FR%rs%a)
-          case('hydrofrac')
-             ok = allocated(D%I(i)%HF%a)
-          end select
+          ok = allocated(D%I(i)%FR%rs%a)
        case('b')
-          select case(D%I(i)%coupling)
-          case('friction')
-             ok = allocated(D%I(i)%FR%rs%b)
-          case('hydrofrac')
-             ok = allocated(D%I(i)%HF%b)
-          end select
+          ok = allocated(D%I(i)%FR%rs%b)
        case('f0')
           ok = allocated(D%I(i)%FR%rs%f0)
        case('L')
@@ -922,10 +905,16 @@ contains
           ok = allocated(D%I(i)%TP%T)
        case('P')
           ok = allocated(D%I(i)%TP%p)
+       case('wm')
+          ok = allocated(D%I(i)%HF%wm)
+       case('wp')
+          ok = allocated(D%I(i)%HF%wp)
        case('p')
           ok = allocated(D%I(i)%HF%p)
        case('u')
           ok = allocated(D%I(i)%HF%u)
+       case('v')
+          ok = allocated(D%I(i)%HF%v)
        end select
 
     case('bndL')

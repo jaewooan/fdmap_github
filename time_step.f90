@@ -75,6 +75,7 @@ contains
     use fields, only : exchange_fields,update_fields_peak
     use energy, only : energy_interior,energy_block
     use plastic, only : update_fields_plastic
+    use interfaces, only : update_fields_iface_implicit
     use output, only : output_list,write_output
     use io, only : error
 
@@ -86,7 +87,7 @@ contains
     type(output_list),intent(inout) :: outlist
     logical,intent(in) :: final_step,solid
 
-    integer :: i,stage
+    integer :: i,im,ip,stage
     real :: t0
 
     ! initial time
@@ -138,12 +139,22 @@ contains
 
     end do
 
-    ! operator splitting: implicit Euler integration of plasticity
+    ! operator splitting: implicit updates of stiff terms or DAEs
+
+    ! implicit Euler integration of plasticity
        
     do i = 1,D%nblocks
        call update_fields_plastic(D%B(i)%G,D%G,D%F,D%B(i)%F,D%B(i)%M,D%E,D%mode,dt)
     end do
+
+    ! implicit Euler integration of interface physics
  
+    do i = 1,D%nifaces
+       im = D%I(i)%iblockm
+       ip = D%I(i)%iblockp
+       call update_fields_iface_implicit(D%I(i),D%B(im)%F,D%B(ip)%F,dt)
+    end do
+
     ! exchange fields between processes
 
     call exchange_fields(D%C,D%F)
@@ -155,7 +166,7 @@ contains
 
     use domain, only : domain_type
     use fields, only : scale_rates_interior,scale_rates_boundary
-    use boundaries, only : scale_rates_iface
+    use interfaces, only : scale_rates_iface
     use energy, only : scale_rates_energy
 
     implicit none
@@ -242,7 +253,7 @@ contains
 
     use domain, only : domain_type
     use fields, only : update_fields_interior,update_fields_boundary
-    use boundaries, only : update_fields_iface
+    use interfaces, only : update_fields_iface
     use energy, only : update_energy
 
     implicit none

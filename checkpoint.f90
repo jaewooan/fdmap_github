@@ -248,7 +248,7 @@ contains
   subroutine checkpoint_op(operation,name,number,D)
 
     use domain, only : domain_type
-    use boundaries, only : checkpoint_iface
+    use interfaces, only : checkpoint_iface
     use fields, only : checkpoint_fields,checkpoint_block_fields,exchange_fields
     use io, only : error
 
