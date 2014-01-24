@@ -459,7 +459,7 @@ contains
     integer,intent(in) :: mode
     real,intent(in) :: t
 
-    real,dimension(:),allocatable :: phip
+    real,dimension(:),allocatable :: phip,vnm,vnp
 
     if (I%skip) return ! process has no grid points adjacent to interface
 
@@ -517,6 +517,8 @@ contains
     case('hydrofrac')
 
        allocate(phip(I%m:I%p))
+       allocate(vnm(I%m:I%p))
+       allocate(vnp(I%m:I%p))
 
        ! set hat variables (Fhat) by balancing fluid and solid tractions
        ! and matching fluid and solid velocities
@@ -528,7 +530,7 @@ contains
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp)
        case('y')
 
           ! Fm = block fields on minus side (use bndFT = top    boundary of this block)
@@ -550,15 +552,15 @@ contains
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp)
           ! output P-wave stress transfer phip from above subroutine
 
        end select
 
        ! set rates for auxiliary fields (fluid velocity, pressure),
-       ! passing in P-wave stress transfer phip
+       ! passing in P-wave stress transfer phip, vnm, vnp
 
-       call set_rates_hydrofrac(I%HF,C,I%m,I%p,phip,I%x(I%m:I%p),I%y(I%m:I%p),t)
+       call set_rates_hydrofrac(I%HF,C,I%m,I%p,phip,vnm,vnp,I%x(I%m:I%p),I%y(I%m:I%p),t)
 
        deallocate(phip)
 
@@ -887,7 +889,7 @@ contains
   end subroutine frictional_interface_mode2
 
 
-  subroutine enforce_hydrofrac_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,HF,phip)
+  subroutine enforce_hydrofrac_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,HF,phip,vnm,vnp)
 
     use hydrofrac, only : hf_type
     use io, only : error
@@ -900,7 +902,7 @@ contains
     real,dimension(m:p),intent(in) :: x,y
     real,intent(in) :: t
     type(hf_type),intent(inout) :: HF
-    real,dimension(m:p),intent(out) :: phip
+    real,dimension(m:p),intent(out) :: phip,vnm,vnp
 
     integer :: i
 
@@ -908,7 +910,7 @@ contains
        select case(mode)
        case(2)
           call hydrofrac_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,HF,phip(i))
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,HF,phip(i),vnm(i),vnp(i))
        case(3)
           call error('No hydraulic fractures in antiplane shear','enforce_hydrofrac_interface')
        end select
@@ -917,21 +919,21 @@ contains
   end subroutine enforce_hydrofrac_interface
 
 
-  subroutine hydrofrac_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,HF,phip)
+  subroutine hydrofrac_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,HF,phip,vnm,vnp)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use hydrofrac, only : hf_type,fluid_stresses,wall_velocities
+    use hydrofrac, only : hf_type,fluid_stresses
 
     implicit none
 
-    real,intent(out) :: Fhatm(6),Fhatp(6),phip
+    real,intent(out) :: Fhatm(6),Fhatp(6),phip,vnm,vnp
     real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
     integer,intent(in) :: i
     type(hf_type),intent(inout) :: HF
 
     real :: Zsim,Zsip,Zpim,Zpip, &
-         vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-         vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
+         vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+         vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
     real :: etap,taum,taup,p
 
     ! naming convention:
@@ -997,10 +999,6 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
-
-    ! use hat variable wall velocities to set rates of opening/closing
-
-    call wall_velocities(HF,i,vnm,vnp)
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 

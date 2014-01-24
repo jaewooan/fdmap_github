@@ -355,7 +355,7 @@ contains
   end subroutine update_fields_hydrofrac
 
 
-  subroutine set_rates_hydrofrac(HF,C,m,p,phip,x,y,t)
+  subroutine set_rates_hydrofrac(HF,C,m,p,phip,vnm,vnp,x,y,t)
 
     use mpi_routines2d, only : cartesian
     use fd, only : diff
@@ -365,7 +365,7 @@ contains
     type(hf_type),intent(inout) :: HF
     type(cartesian),intent(in) :: C
     integer,intent(in) :: m,p
-    real,intent(in) :: phip(m:p),x(m:p),y(m:p),t
+    real,intent(in) :: phip(m:p),vnm(m:p),vnp(m:p),x(m:p),y(m:p),t
 
     integer :: i
     real :: uhat,phat
@@ -397,6 +397,11 @@ contains
        !HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
        HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0
     end do
+    
+    do i = HF%L%m,HF%L%p
+       HF%Dwp(i) = HF%Dwp(i) + vnp(i)
+       HF%Dwm(i) = HF%Dwm(i) + vnm(i)
+    end do
 
     ! and then adding crack opening/closing term in mass balance
 
@@ -408,7 +413,7 @@ contains
              end do
           else
              do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*(HF%Dwp(i)-HF%Dwm(i))/(HF%wp0(i)-HF%wm0(i))
+                HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp0(i)-HF%wm0(i))
              end do
           end if
        else
@@ -418,7 +423,7 @@ contains
              end do
           else
              do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*(HF%Dwp(i)-HF%Dwm(i))/(HF%wp(i)-HF%wm(i))
+                HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp(i)-HF%wm(i))
              end do
           end if
        end if
@@ -487,24 +492,6 @@ contains
     taup = 0d0
 
   end subroutine fluid_stresses
-
-
-  subroutine wall_velocities(HF,i,vnm,vnp)
-
-    implicit none
-
-    type(HF_type),intent(inout) :: HF
-    integer,intent(in) :: i
-    real,intent(in) :: vnm,vnp
-
-    ! set wall velocities equal to (hat variable) 
-    ! solid particle velocities normal to wall
-
-    HF%Dwm(i) = vnm
-    HF%Dwp(i) = vnp
-
-  end subroutine wall_velocities
-
 
   subroutine update_fields_hydrofrac_implicit(HF,m,p,Zm,Zp,dt)
   
