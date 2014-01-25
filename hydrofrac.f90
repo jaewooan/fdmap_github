@@ -24,6 +24,7 @@ module hydrofrac
   ! DV = rate of change of velocity
   ! DP = rate of change of pressure
   ! DWM,DWP = rate of wall position
+  ! Hw = width-averaging operator 
   ! SATM,SATP = SAT penalty weights (~wave speed / grid spacing)
   ! L = limits type (indices for FD operations)
   ! XSOURCE,YSOURCE = source position
@@ -32,11 +33,11 @@ module hydrofrac
   ! WSOURCE = source width (in space)
 
   type :: hf_type
-     logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp
+     logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid
      integer :: n
      character(1) :: direction
      real :: rho0,K0,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp
+     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw
      real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
   end type hf_type
@@ -64,14 +65,15 @@ contains
     character(256) :: HFstr
     character(256) :: str
 
-    logical :: hydrofrac_file,coupled,linearized_walls,source_term,operator_splitting
+    logical :: hydrofrac_file,coupled,linearized_walls,source_term,operator_splitting,inviscid
     integer :: n
     real :: rho0,K0,w0,xsource,ysource,tsource,Asource,wsource
     character(256) :: filename
     integer,parameter :: nb=3 ! number of additional boundary (ghost) points needed for FD operators
 
     namelist /hydrofrac_list/ rho0,K0,w0,xsource,ysource,tsource,Asource,wsource, &
-         n,coupled,linearized_walls,source_term,operator_splitting,hydrofrac_file,filename
+         n,coupled,linearized_walls,source_term,operator_splitting,hydrofrac_file,filename, &
+         inviscid
 
     ! defaults
        
@@ -89,6 +91,7 @@ contains
     hydrofrac_file = .false.
     source_term = .true.
     operator_splitting = .true.
+    inviscid = .true.
     filename = ''
 
     ! read in hydraulic fracture parameters
@@ -116,6 +119,7 @@ contains
     HF%coupled = coupled
     HF%linearized_walls = linearized_walls
     HF%operator_splitting = operator_splitting
+    HF%inviscid =  inviscid
     HF%source_term = source_term
     HF%xsource = xsource
     HF%ysource = ysource
@@ -144,6 +148,7 @@ contains
        call write_matlab(echo,'coupled',HF%coupled,HFstr)
        call write_matlab(echo,'linearized_walls',HF%linearized_walls,HFstr)
        call write_matlab(echo,'operator_splitting',HF%operator_splitting,HFstr)
+       call write_matlab(echo,'inviscid',HF%inviscid,HFstr)
        call write_matlab(echo,'source_term',HF%source_term,HFstr)
        if (HF%source_term) then
           call write_matlab(echo,'xsource',HF%xsource,HFstr)
@@ -175,7 +180,9 @@ contains
          HF%u  (HF%L%mb:HF%L%pb),HF%p  (HF%L%mb:HF%L%pb), &
          HF%Du (HF%L%m :HF%L%p ),HF%Dp (HF%L%m :HF%L%p ), &
          HF%v (HF%n,HF%L%m:HF%L%p), &
-         HF%Dv(HF%n,HF%L%m:HF%L%p))
+         HF%Dv(HF%n,HF%L%m:HF%L%p), &
+         HF%Hw(HF%n), &
+            )
 
     HF%wm0 = 1d40
     HF%wp0 = 1d40
@@ -215,7 +222,48 @@ contains
     HF%wm = HF%wm0
     HF%wp = HF%wp0
 
+    ! Compute Width-averaging norm operator
+    call Hnorm(HF%Hw)
+
   end subroutine init_hydrofrac
+
+  subroutine Hnorm(Hw)
+
+
+      use fd_coeff, only : HL, HR, nbst 
+
+      implicit none
+
+      real,intent(out),dimension(:) :: Hw
+      integer :: n
+
+
+      Hw = 1d0 ! interior values
+      n = size(Hw,1)
+
+      !todo: add assertions to ensure that n is large enough to hold the norm
+
+      Hw(1:nbst) = HL
+      Hw((n-nbst+1):n) = HR
+
+  end subroutine Hnorm
+
+  ! Apply the width-averaging operator along each cross-section of the hydrofrac
+  ! layer
+  ! The velocity v is width-averaged to u
+  subroutine width_average(HF)
+
+      implicit none
+
+      type(hf_type), intent(inout) :: HF
+      integer :: i
+
+       do i = HF%L%m,HF%L%p
+          HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
+       end do
+       HF%u = HF%u/(HF%n - 1)
+
+  end subroutine
 
 
   subroutine read_hydrofrac(HF,filename,comm,array)
@@ -266,6 +314,7 @@ contains
     if (allocated(HF%Du )) deallocate(HF%Du )
     if (allocated(HF%Dv )) deallocate(HF%Dv )
     if (allocated(HF%Dp )) deallocate(HF%Dp )
+    if (allocated(HF%Hw )) deallocate(HF%Hw )
 
   end subroutine destroy_hydrofrac
 
@@ -381,6 +430,9 @@ contains
 
     allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p))
 
+    ! Width-average v to obtain u
+    call width_average(HF)
+
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
 
@@ -392,9 +444,10 @@ contains
     ! set rates from mass and momentum balance equations,
     ! starting with linearized acoustics (rigid walls)
 
+
     do i = HF%L%m,HF%L%p
        HF%Du(i) = HF%Du(i)-dpdx(i)/HF%rho0
-       !HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
+       HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
        HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0
     end do
     
