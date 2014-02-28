@@ -3,9 +3,29 @@ module hydrofrac
   use fd, only : limits
 
   implicit none
+  ! -- Second derivative finite difference type
+  ! Contains:
+  ! NI = number of points in interior stencil
+  ! MI = minimum index in interior stencil
+  ! PI = maximum index in interior stencil
+  ! NBND = number of points in boundary stencil
+  ! NBST = number of boundary stencils
+  ! H00I = SBP H-norm weight at boundary grid point
+  ! DI = interior derivative coefficients
+  ! DL/DR = left/right boundary derivative coefficients
+  ! D1L/D1R = first derivative boundary coefficients
+  ! HL/HR = diagonal norm entries near boundary (normalized so H=1 in interior)
+  ! FDmethod = finite difference method for second derivative
+  type :: fd2_type
+    integer :: nI,mI,pI,nbnd,nbst,nD1
+    real :: H00i
+    real,dimension(:),allocatable :: DI,DmI,DpI,HL,HR,D1L,D1R
+    real,dimension(:,:),allocatable :: DL,DR
+    character(4) :: FDmethod
+  end type
 
   ! USE_HF = flag indicating hydraulic fracture
-  ! BNDM,BNDP = process is resposible for minus/plus boundary 
+  ! BNDM,BNDP = process is responsible for minus/plus boundary 
   ! DIRECTION = direction of fracture
   ! COUPLED = full fluid-solid coupling (F=neglect crack opening in mass balance)
   ! LINEARIZED_WALLS = linearize wall opening term in mass balance
@@ -14,6 +34,7 @@ module hydrofrac
   ! RHO0 = (initial) density
   ! K0 = bulk modulus
   ! C0 = sound speed
+  ! mu = dynamic viscosity
   ! N = number of points resolving width
   ! WM,WP = position of minus (lower) and upper walls (wp-wm=width)
   ! WM0,WP0 = initial values of wm,wp
@@ -26,21 +47,25 @@ module hydrofrac
   ! DWM,DWP = rate of wall position
   ! Hw = width-averaging operator 
   ! SATM,SATP = SAT penalty weights (~wave speed / grid spacing)
+  ! SATYM, SATYP = SAT penalty terms used by viscous terms 
   ! L = limits type (indices for FD operations)
   ! XSOURCE,YSOURCE = source position
   ! TSOURCE = source duration
   ! ASOURCE = source amplitude
   ! WSOURCE = source width (in space)
+  ! fd2_type  = finite difference second derivative operator
 
   type :: hf_type
      logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid
      integer :: n
      character(1) :: direction
-     real :: rho0,K0,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw
-     real,dimension(:,:),allocatable :: v,Dv
+     real :: rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource
+     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw,hy
+     real,dimension(:,:),allocatable :: v,Dv,SATyp,SATym
      type(limits) :: L
+     type(fd2_type) :: fd2
   end type hf_type
+
 
 contains
 
@@ -66,20 +91,22 @@ contains
     character(256) :: str
 
     logical :: hydrofrac_file,coupled,linearized_walls,source_term,operator_splitting,inviscid
-    integer :: n
-    real :: rho0,K0,w0,xsource,ysource,tsource,Asource,wsource
+    integer :: n,i,j
+    real :: rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource
     character(256) :: filename
+    character(4) :: FDmethod
     integer,parameter :: nb=3 ! number of additional boundary (ghost) points needed for FD operators
 
-    namelist /hydrofrac_list/ rho0,K0,w0,xsource,ysource,tsource,Asource,wsource, &
+    namelist /hydrofrac_list/ rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
          n,coupled,linearized_walls,source_term,operator_splitting,hydrofrac_file,filename, &
-         inviscid
+         inviscid,FDmethod
 
     ! defaults
        
     rho0 = 0d0
     K0 = 1d40
     w0 = 0d0
+    mu = 0d0
     xsource = 0d0
     ysource = 0d0
     tsource = 1d0
@@ -93,6 +120,7 @@ contains
     operator_splitting = .true.
     inviscid = .true.
     filename = ''
+    FDmethod = 'SBP6'
 
     ! read in hydraulic fracture parameters
 
@@ -116,6 +144,7 @@ contains
 
     HF%rho0 = rho0
     HF%K0 = K0
+    HF%mu = mu
     HF%coupled = coupled
     HF%linearized_walls = linearized_walls
     HF%operator_splitting = operator_splitting
@@ -136,6 +165,8 @@ contains
     HF%c0 = sqrt(HF%K0/HF%rho0)
     HF%SATm = H00i*HF%c0/HF%h ! SAT penalty weight, minus side
     HF%SATp = H00i*HF%c0/HF%h ! SAT penalty weight, plus  side
+
+
 
     ! output hydraulic fracture parameters
     
@@ -171,6 +202,12 @@ contains
     ! where L%m:L%p  = range of indices handled by process
     ! and  L%mb:L%pb = range of indices including ghost points
 
+    ! Initialize second derivative SBP operator
+    if( .not. inviscid) then
+        HF%fd2%FDmethod = FDmethod
+        call init_fd2(FDmethod,HF%fd2)
+    end if 
+
     ! allocate arrays and initialize with unreasonable values to facilitate debugging
 
     allocate( &
@@ -182,6 +219,8 @@ contains
          HF%v (HF%n,HF%L%m:HF%L%p), &
          HF%Dv(HF%n,HF%L%m:HF%L%p), &
          HF%Hw(HF%n), &
+         HF%hy(HF%L%m:HF%L%p), &
+         HF%SATyp(4,HF%L%m:HF%L%p ),HF%SATym(4,HF%L%m:HF%L%p ), &
             )
 
     HF%wm0 = 1d40
@@ -225,45 +264,30 @@ contains
     ! Compute Width-averaging norm operator
     call Hnorm(HF%Hw)
 
+    if(HF%inviscid) return
+
+    ! Compute grid spacings in the cross-section direction (y)
+    HF%hy = (HF%wp0 - HF%wm0)/(HF%n - 1)
+    
+
+    ! Set SAT penalty weights for viscous terms
+    ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
+    do i = HF%L%m,HF%L%p
+        ! Impose velocities only
+        HF%SATym(:,i) =   HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i)
+        HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i) 
+        ! Impose stresses only
+        !HF%SATym(:,i) =   HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i)
+        !HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i) 
+    end do
+    
+    ! Initialize Gaussian perturbation across hydrofrac cross-section
+     ! do i = 0,HF%n
+     !     HF%v(i,:) = exp(-0.1*(HF%hy(i)*i - HF%wp0(i))**2)
+     ! end do
+
   end subroutine init_hydrofrac
 
-  subroutine Hnorm(Hw)
-
-
-      use fd_coeff, only : HL, HR, nbst 
-
-      implicit none
-
-      real,intent(out),dimension(:) :: Hw
-      integer :: n
-
-
-      Hw = 1d0 ! interior values
-      n = size(Hw,1)
-
-      !todo: add assertions to ensure that n is large enough to hold the norm
-
-      Hw(1:nbst) = HL
-      Hw((n-nbst+1):n) = HR
-
-  end subroutine Hnorm
-
-  ! Apply the width-averaging operator along each cross-section of the hydrofrac
-  ! layer
-  ! The velocity v is width-averaged to u
-  subroutine width_average(HF)
-
-      implicit none
-
-      type(hf_type), intent(inout) :: HF
-      integer :: i
-
-       do i = HF%L%m,HF%L%p
-          HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
-       end do
-       HF%u = HF%u/(HF%n - 1)
-
-  end subroutine
 
 
   subroutine read_hydrofrac(HF,filename,comm,array)
@@ -315,6 +339,9 @@ contains
     if (allocated(HF%Dv )) deallocate(HF%Dv )
     if (allocated(HF%Dp )) deallocate(HF%Dp )
     if (allocated(HF%Hw )) deallocate(HF%Hw )
+    if (allocated(HF%hy )) deallocate(HF%hy )
+    if (allocated(HF%SATyp )) deallocate(HF%SATyp )
+    if (allocated(HF%SATym )) deallocate(HF%SATym )
 
   end subroutine destroy_hydrofrac
 
@@ -404,7 +431,7 @@ contains
   end subroutine update_fields_hydrofrac
 
 
-  subroutine set_rates_hydrofrac(HF,C,m,p,phip,vnm,vnp,x,y,t)
+  subroutine set_rates_hydrofrac(HF,C,m,p,phip,vnm,vnp,vtm,vtp,sntm,sntp,x,y,t)
 
     use mpi_routines2d, only : cartesian
     use fd, only : diff
@@ -414,7 +441,8 @@ contains
     type(hf_type),intent(inout) :: HF
     type(cartesian),intent(in) :: C
     integer,intent(in) :: m,p
-    real,intent(in) :: phip(m:p),vnm(m:p),vnp(m:p),x(m:p),y(m:p),t
+    real,intent(in) :: phip(m:p),vnm(m:p),vnp(m:p),vtm(m:p),vtp(m:p), &
+                       sntm(m:p),sntp(m:p),x(m:p),y(m:p),t
 
     integer :: i
     real :: uhat,phat
@@ -436,7 +464,7 @@ contains
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
 
-    call diff(HF%L,HF%u,dudx)
+    call diff(HF%L,HF%u*(HF%wp0 - HF%wm0),dudx)
     call diff(HF%L,HF%p,dpdx)
     dudx = dudx/HF%h
     dpdx = dpdx/HF%h
@@ -448,7 +476,7 @@ contains
     do i = HF%L%m,HF%L%p
        HF%Du(i) = HF%Du(i)-dpdx(i)/HF%rho0
        HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
-       HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0
+       HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/(HF%wp0(i) - HF%wm0(i))
     end do
     
     do i = HF%L%m,HF%L%p
@@ -492,14 +520,8 @@ contains
        end do
     end if
 
-    ! and viscous terms (explicit time-stepping)
 
-    !if (.not.HF%operator_splitting) then
-    !   do i = HF%L%m,HF%L%p
-    !      call second_derivative(v(:,i),v_yy)
-    !      HF%Dv(:,i) = HF%Dv(:,i)+HF%mu*v_yy+SAT_terms
-    !   end do
-    !end if
+    call set_rates_viscous(HF,m,p,vtm,vtp,sntm,sntp)
 
     ! add penalty terms to enforce BC with SAT method
 
@@ -526,23 +548,36 @@ contains
   end subroutine set_rates_hydrofrac
 
 
-  subroutine fluid_stresses(HF,i,p,taum,taup)
+
+  subroutine fluid_stresses(HF,i,p,taum,taup,vtm,vtp)
 
     implicit none
 
     type(HF_type),intent(in) :: HF
     integer,intent(in) :: i
-    real,intent(out) :: p,taum,taup
+    real,intent(out) :: p,taum,taup,vtm,vtp
 
     ! fluid pressure
 
     p = HF%p(i)
 
+    ! Tangential velocities
+    vtm = HF%v(1,i)
+    vtp = HF%v(HF%n,i)
+
     ! shear stress on bottom (taum) and top (taup) walls,
     ! evaluate these as mu*dv/dy for viscous fluid with fluid velocity v
 
+
+    ! Inviscid case
     taum = 0d0
     taup = 0d0
+
+    if(HF%inviscid) return
+
+    ! Viscous case
+    taum = HF%mu*diff_bnd_m(HF%v(:,i))/HF%hy(i)
+    taup = HF%mu*diff_bnd_p(HF%v(:,i))/HF%hy(i)
 
   end subroutine fluid_stresses
 
@@ -606,6 +641,312 @@ contains
          HF%bndm,HF%bndp,HF%p,HF%direction)
 
   end subroutine share_hydrofrac
+  
+  subroutine Hnorm(Hw)
 
+
+      use fd_coeff, only : HL, HR, nbst 
+
+      implicit none
+
+      real,intent(out),dimension(:) :: Hw
+      integer :: n
+
+
+      Hw = 1d0 ! interior values
+      n = size(Hw,1)
+
+      !todo: add assertions to ensure that n is large enough to hold the norm
+
+      Hw(1:nbst) = HL
+      Hw((n-nbst+1):n) = HR
+
+  end subroutine Hnorm
+
+  ! Apply the width-averaging operator along each cross-section of the hydrofrac
+  ! layer
+  ! The velocity v is width-averaged to u
+  subroutine width_average(HF)
+
+      implicit none
+
+      type(hf_type), intent(inout) :: HF
+      integer :: i
+
+       do i = HF%L%m,HF%L%p
+          HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
+       end do
+       HF%u = HF%u/(HF%n - 1)
+
+  end subroutine
+  
+  subroutine set_rates_viscous(HF,m,p,vtm,vtp,sntm,sntp)
+
+      implicit none
+
+      type(hf_type),intent(inout) :: HF
+      integer,intent(in) :: m,p
+      real,intent(in) :: vtm(m:p),vtp(m:p),sntm(m:p),sntp(m:p)
+
+      real,dimension(:),allocatable :: v_yy
+      real :: gp,gm ! Boundary conditions of the form: gp = SAT_WEIGHT*b.c/h 
+      integer :: i
+
+      if(HF%inviscid) return
+
+      allocate(v_yy(HF%n))
+      v_yy = 0d0
+    
+      ! and viscous terms (explicit time-stepping)
+
+      do i = HF%L%m,HF%L%p
+         call second_derivative(HF%fd2,HF%v(:,i),v_yy)
+         v_yy = v_yy/(HF%hy(i)**2)
+         HF%Dv(:,i) = HF%Dv(:,i)+HF%mu/HF%rho0*v_yy
+
+         ! SAT terms, minus boundary
+         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%v(1,i)
+         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2,i)*(diff_bnd_m(HF%v(:,i))/HF%hy(i)) 
+         gm = HF%SATym(3,i)*( HF%v(1,i)  - vtp(i) )/HF%hy(i)
+         call diff_T_bnd_m(HF%Dv(:,i),gm)
+
+         ! SAT terms, plus boundary
+         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1,i)*HF%v(i,HF%n)
+         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2,i)*(diff_bnd_p(HF%v(:,i))/HF%hy(i))
+         gp = HF%SATyp(3,i)*( HF%v(HF%n,i) - vtm(i) )/HF%hy(i)
+         call diff_T_bnd_p(HF%Dv(:,i),gp)
+      end do
+
+      deallocate(v_yy)
+
+  end subroutine 
+
+
+  ! Initializes stencils for compact, second derivatives and 
+  ! compatible first derivative boundary stencils
+  subroutine init_fd2(FDmethod,fd2)
+
+      use io, only : error
+
+      implicit none
+
+      character(*),intent(in) :: FDmethod
+
+      integer :: i
+      type(fd2_type), intent(out) :: fd2
+
+      select case(FDmethod)
+      case default
+        call error('Invalid second derivative FD method','init_fd2')
+      case('SBP2')
+        fd2%nI = 3
+        fd2%nbnd = 3
+        fd2%nbst = 1
+        fd2%H00i = 2d0
+        fd2%nD1  = 3
+      case('SBP4')
+        fd2%nI = 5
+        fd2%nbnd = 6
+        fd2%nbst = 4
+        fd2%H00i = 2.823529411764706d0
+        fd2%nD1  = 4
+      case('SBP6')
+        fd2%nI = 7
+        fd2%nbnd = 9
+        fd2%nbst = 6
+        fd2%H00i = 3.165067037878233d0
+        fd2%nD1  = 5
+      end select
+
+    fd2%mI = -(fd2%nI-1)/2
+    fd2%pI =  (fd2%nI-1)/2
+
+    allocate(fd2%DI(fd2%mI:fd2%pI))
+    allocate(fd2%DL (0:fd2%nbnd-1,0:fd2%nbst-1),fd2%DR (-(fd2%nbnd-1):0,-(fd2%nbst-1):0))
+    allocate(fd2%D1L(fd2%nD1),fd2%D1R(fd2%nD1))
+
+    select case(FDmethod)
+
+    case('SBP2')
+
+        ! interior
+
+        fd2%DI = (/ 1.0d0, -2.0d0, 1.0d0 /)
+
+        ! left boundary
+
+        fd2%DL(:,0) = fd2%DI
+
+        ! First derivative for the left boundary
+
+        fd2%D1L = (/ -3/2d0, 2d0, -1/2d0 /)  
+
+    case('SBP4')
+
+        ! interior 
+
+        fd2%DI = (/ -0.083333333333333d0,  1.333333333333333d0, -2.500000000000000d0,       &
+                     1.333333333333333d0, -0.083333333333333d0                              /)
+
+        ! left boundary
+
+        fd2%DL(:,0) = (/ 2d0, -5d0, 4d0, -1d0, 0d0, 0d0 /)
+        fd2%DL(:,1) = (/ 1d0, -2d0, 1d0,  0d0, 0d0, 0d0 /)
+        fd2%DL(:,2) = (/ -0.093023255813953d0,  1.372093023255814d0, -2.558139534883721d0,  &
+                          1.372093023255814d0, -0.093023255813953d0,  0.000000000000000d0   /)
+        fd2%DL(:,3) = (/ -0.020408163265306d0,  0.000000000000000d0,  1.204081632653061d0,  &
+                         -2.408163265306122d0,  1.306122448979592d0, -0.081632653061224d0   /)
+
+        ! First derivative for the left boundary
+
+
+        fd2%D1L = (/ -11/6d0, 3d0, -3/2d0, 1/3d0 /)  
+
+    case('SBP6')
+        
+        ! interior
+
+        fd2%DI = (/  0.011111111111111d0,  -0.150000000000000d0,   1.500000000000000d0,     & 
+                    -2.722222222222222d0,   1.500000000000000d0,  -0.150000000000000d0,     &  
+                     0.011111111111111d0                                                    /)
+
+        fd2%DL(:,0) = (/  2.788238454587638d0,  -8.024525606271522d0,   8.215717879209711d0, &  
+                         -3.382384545876377d0,   0.274525606271522d0,   0.128428212079029d0, &
+                          0.000000000000000d0,   0.000000000000000d0,   0.000000000000000d0  /)
+        fd2%DL(:,1) = (/  1.053412969283277d0,  -2.350398179749716d0,   1.867463026166098d0, &  
+                         -1.034129692832765d0,   0.600398179749716d0,  -0.136746302616610d0, &
+                          0.000000000000000d0,   0.000000000000000d0,   0.000000000000000d0  /)
+        fd2%DL(:,2) = (/ -0.644178040083610d0,   4.137556867084717d0,  -8.108447067502766d0, &   
+                          6.941780400836100d0,  -2.887556867084716d0,   0.560844706750277d0, &
+                          0.000000000000000d0,   0.000000000000000d0,   0.000000000000000d0  /)
+        fd2%DL(:,3) = (/  0.213357591590471d0,  -1.159078186228774d0,   3.511693723953474d0, &  
+                         -4.723144865335573d0,   2.489690240716552d0,  -0.341475399639236d0, &   
+                          0.008956894943086d0,   0.000000000000000d0,   0.000000000000000d0  /)
+        fd2%DL(:,4) = (/ -0.179078329313190d0,   0.915651051584783d0,  -1.987601032542000d0, &   
+                          3.387647581566586d0,  -3.719859506580339d0,   1.735582497566756d0, &  
+                         -0.164529643265203d0,   0.012187380982608d0,   0.000000000000000d0  /)
+        fd2%DL(:,5) = (/  0.040020014763742d0,  -0.187522354892963d0,   0.347126777927445d0, &  
+                         -0.417791070219097d0,   1.560601736642238d0,  -2.684870208442730d0, &   
+                          1.479418278121504d0,  -0.147941827812150d0,   0.010958653912011d0  /) 
+
+        ! First derivative for the left boundary
+        
+        fd2%D1L = (/ -25/12d0, 4d0, -3d0, 4/3d0, -1/4d0 /)
+
+    end select
+        
+        ! right boundary
+
+        do i = 0,fd2%nbst-1
+            fd2%DR(:,-i) = fd2%DL(fd2%nbnd-1:0:-1,i)
+        end do
+
+        ! First derivative for the right boundary
+
+        fd2%D1R = -fd2%D1L(fd2%nD1:1:-1)
+
+
+  end subroutine
+  
+  ! Compute the second derivative of v and store the result in v_yy
+  subroutine second_derivative(fd2,v,v_yy)
+
+      implicit none
+
+      type(fd2_type),intent(in) :: fd2
+      real,dimension(:),intent(in) :: v
+      real,dimension(:),intent(out) :: v_yy
+
+      integer :: i,n
+
+      n = size(v,1)
+      
+      ! Interior
+      do i = fd2%nbst+1,n-fd2%nbst
+         v_yy(i) = dot_product(fd2%DI,v(i+fd2%mI:i+fd2%pI))
+      end do
+
+      ! Left boundary
+      do i = 0,fd2%nbst-1
+         v_yy(1 + i) = dot_product( fd2%DL(:, i),v(1:fd2%nbnd) ) 
+      end do
+    
+      ! Right boundary
+      do i = 0,fd2%nbst-1         
+         v_yy(n-i) = dot_product( fd2%DR(:,-i),v((n-fd2%nbnd+1):n) )
+      end do
+    
+
+  end subroutine
+
+  ! Differentiate the vector u on plus boundary (used by penalty terms)
+  pure function diff_bnd_p(u) result(v)
+
+      use fd_coeff, only: nbnd,DR
+
+      implicit none
+
+      real,dimension(:),intent(in) :: u
+      real :: v
+      integer :: n
+
+      n = size(u,1)
+
+      v = dot_product(u((n-nbnd+1):n),D1R(:,0))
+
+  end function
+  
+  ! Differentiate the vector u on minus boundary (used by penalty terms)
+  pure function diff_bnd_m(u) result(v)
+
+      use fd_coeff, only: nbnd,DL 
+
+      implicit none
+
+      real,dimension(:),intent(in) :: u
+      real :: v
+      integer :: n
+
+      n = size(u,1)
+
+      v = dot_product(u(1:nbnd),DL(:,0))
+
+  end function
+  
+  ! Compute Dv = Dv + D^T*g on minus boundary (used by penalty terms)
+  subroutine diff_T_bnd_m(Dv,g)
+      
+      use fd_coeff, only: nbnd,DL
+
+      implicit none
+
+      real,dimension(:),intent(inout) :: Dv
+      real,intent(in) :: g
+      
+      integer :: n
+
+      n = size(Dv,1)
+      
+      Dv(1:nbnd) = Dv(1:nbnd) + DL(:,0)*g
+
+  end subroutine
+
+  ! Compute Dv = Dv + D^T*g on plus boundary (used by penalty terms)
+  subroutine diff_T_bnd_p(Dv,g)
+      
+      use fd_coeff, only: nbnd,DR
+
+      implicit none
+
+      real,dimension(:),intent(inout) :: Dv
+      real,intent(in) :: g
+      
+      integer :: n
+
+      n = size(Dv,1)
+      
+      Dv((n-nbnd+1):n) = Dv((n-nbnd+1):n) + DR(:,0)*g
+
+  end subroutine
 
 end module hydrofrac
