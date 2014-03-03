@@ -14,12 +14,14 @@ module hydrofrac
   ! DI = interior derivative coefficients
   ! DL/DR = left/right boundary derivative coefficients
   ! D1L/D1R = first derivative boundary coefficients
+  ! H1Li/H1Ri = inverted diagonal norm coefficients near boundaries (needed by penalty terms of the
+  ! form D^T)
   ! HL/HR = diagonal norm entries near boundary (normalized so H=1 in interior)
   ! FDmethod = finite difference method for second derivative
   type :: fd2_type
     integer :: nI,mI,pI,nbnd,nbst,nD1
     real :: H00i
-    real,dimension(:),allocatable :: DI,DmI,DpI,HL,HR,D1L,D1R
+    real,dimension(:),allocatable :: DI,DmI,DpI,HL,HR,D1L,D1R,HLi,HRi
     real,dimension(:,:),allocatable :: DL,DR
     character(4) :: FDmethod
   end type
@@ -274,8 +276,8 @@ contains
     ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
     do i = HF%L%m,HF%L%p
         ! Impose velocities only
-        HF%SATym(:,i) =   HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i)
-        HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i) 
+        HF%SATym(:,i) =   HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i)
+        HF%SATyp(:,i) = - HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i) 
         ! Impose stresses only
         !HF%SATym(:,i) =   HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i)
         !HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i) 
@@ -576,8 +578,8 @@ contains
     if(HF%inviscid) return
 
     ! Viscous case
-    taum = HF%mu*diff_bnd_m(HF%v(:,i))/HF%hy(i)
-    taup = HF%mu*diff_bnd_p(HF%v(:,i))/HF%hy(i)
+    taum = HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
+    taup = HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
 
   end subroutine fluid_stresses
 
@@ -705,23 +707,124 @@ contains
          HF%Dv(:,i) = HF%Dv(:,i)+HF%mu/HF%rho0*v_yy
 
          ! SAT terms, minus boundary
-         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%v(1,i)
-         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2,i)*(diff_bnd_m(HF%v(:,i))/HF%hy(i)) 
+         ! Penalty terms not used
+         !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%fd2%H00i*HF%v(1,i)
+         !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2,i)*HF%fd2%H00i*(diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)) 
          gm = HF%SATym(3,i)*( HF%v(1,i)  - vtp(i) )/HF%hy(i)
-         call diff_T_bnd_m(HF%Dv(:,i),gm)
+         call diff_T_bnd_m(HF%Dv(:,i),gm,HF%fd2)
 
          ! SAT terms, plus boundary
-         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1,i)*HF%v(i,HF%n)
-         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2,i)*(diff_bnd_p(HF%v(:,i))/HF%hy(i))
+         ! Penalty terms not used
+         !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1,i)*HF%fd2%H00i*HF%v(i,HF%n)
+         !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2,i)*HF%fd2%H00i*(diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i))
          gp = HF%SATyp(3,i)*( HF%v(HF%n,i) - vtm(i) )/HF%hy(i)
-         call diff_T_bnd_p(HF%Dv(:,i),gp)
+         call diff_T_bnd_p(HF%Dv(:,i),gp,HF%fd2)
       end do
 
       deallocate(v_yy)
 
   end subroutine 
+  
+  ! Compute the second derivative of v and store the result in v_yy
+  subroutine second_derivative(fd2,v,v_yy)
+
+      implicit none
+
+      type(fd2_type),intent(in) :: fd2
+      real,dimension(:),intent(in) :: v
+      real,dimension(:),intent(out) :: v_yy
+
+      integer :: i,n
+
+      n = size(v,1)
+      
+      ! Interior
+      do i = fd2%nbst+1,n-fd2%nbst
+         v_yy(i) = dot_product(fd2%DI,v(i+fd2%mI:i+fd2%pI))
+      end do
+
+      ! Left boundary
+      do i = 0,fd2%nbst-1
+         v_yy(1 + i) = dot_product( fd2%DL(:, i),v(1:fd2%nbnd) ) 
+      end do
+    
+      ! Right boundary
+      do i = 0,fd2%nbst-1         
+         v_yy(n-i) = dot_product( fd2%DR(:,-i),v((n-fd2%nbnd+1):n) )
+      end do
+    
+
+  end subroutine
+
+  ! Differentiate a vector u on minus boundary (used by penalty terms)
+  pure function diff_bnd_m(u,fd2) result(v)
+
+      implicit none
+
+      real,dimension(:),intent(in) :: u
+      type(fd2_type),intent(in) :: fd2
+      real :: v
+      integer :: n
+
+      n = size(u,1)
+
+      v = dot_product(u(1:fd2%nD1),fd2%D1L)
+
+  end function
+
+  ! Differentiate a vector u on plus boundary (used by penalty terms)
+  pure function diff_bnd_p(u,fd2) result(v)
 
 
+      implicit none
+
+      real,dimension(:),intent(in) :: u
+      type(fd2_type),intent(in) :: fd2
+      real :: v
+      integer :: n
+
+      n = size(u,1)
+
+      v = dot_product(u((n-fd2%nD1+1):n),fd2%D1R)
+
+  end function
+  
+  
+  ! Compute Dv = Dv + D^T*g on minus boundary (used by penalty terms)
+  subroutine diff_T_bnd_m(Dv,g,fd2)
+
+      implicit none
+
+      real,dimension(:),intent(inout) :: Dv
+      real,intent(in) :: g
+      type(fd2_type),intent(in) :: fd2
+      
+      integer :: n
+
+      n = size(Dv,1)
+      
+      Dv(1:fd2%nD1) = Dv(1:fd2%nD1) + fd2%HLi*fd2%D1L*g
+
+  end subroutine
+
+  ! Compute Dv = Dv + D^T*g on plus boundary (used by penalty terms)
+  subroutine diff_T_bnd_p(Dv,g,fd2)
+      
+
+      implicit none
+
+      real,dimension(:),intent(inout) :: Dv
+      real,intent(in) :: g
+      type(fd2_type),intent(in) :: fd2
+      
+      integer :: n
+
+      n = size(Dv,1)
+      
+      Dv((n-fd2%nD1+1):n) = Dv((n-fd2%nD1+1):n) + fd2%HRi*fd2%D1R*g
+
+  end subroutine
+  
   ! Initializes stencils for compact, second derivatives and 
   ! compatible first derivative boundary stencils
   subroutine init_fd2(FDmethod,fd2)
@@ -764,6 +867,7 @@ contains
     allocate(fd2%DI(fd2%mI:fd2%pI))
     allocate(fd2%DL (0:fd2%nbnd-1,0:fd2%nbst-1),fd2%DR (-(fd2%nbnd-1):0,-(fd2%nbst-1):0))
     allocate(fd2%D1L(fd2%nD1),fd2%D1R(fd2%nD1))
+    allocate(fd2%HLi(fd2%nD1),fd2%HRi(fd2%nD1))
 
     select case(FDmethod)
 
@@ -780,6 +884,10 @@ contains
         ! First derivative for the left boundary
 
         fd2%D1L = (/ -3/2d0, 2d0, -1/2d0 /)  
+
+        ! Norm for the left boundary
+
+        fd2%HLi = (/ 1/2d0, 1d0, 1d0 /)
 
     case('SBP4')
 
@@ -799,8 +907,11 @@ contains
 
         ! First derivative for the left boundary
 
-
         fd2%D1L = (/ -11/6d0, 3d0, -3/2d0, 1/3d0 /)  
+
+        ! Norm for the left boundary
+
+        fd2%HLi = (/ 0.354166666666667d0,1.229166666666667d0,0.895833333333333d0,1.020833333333333d0 /)
 
     case('SBP6')
         
@@ -832,7 +943,11 @@ contains
         ! First derivative for the left boundary
         
         fd2%D1L = (/ -25/12d0, 4d0, -3d0, 4/3d0, -1/4d0 /)
+         
+        ! Norm for the left boundary
 
+        fd2%HLi = (/ 0.315949074074074d0,1.390393518518518d0,0.627546296296296d0, &
+        1.240509259259259d0,0.911689814814815d0 /)
     end select
         
         ! right boundary
@@ -845,107 +960,12 @@ contains
 
         fd2%D1R = -fd2%D1L(fd2%nD1:1:-1)
 
+        ! Invert norm for the left boundary
+        fd2%HLi = 1/fd2%HLi
 
-  end subroutine
-  
-  ! Compute the second derivative of v and store the result in v_yy
-  subroutine second_derivative(fd2,v,v_yy)
+        ! Norm for the right boundary
+        fd2%HRi = fd2%HLi(fd2%nD1:1:-1)
 
-      implicit none
-
-      type(fd2_type),intent(in) :: fd2
-      real,dimension(:),intent(in) :: v
-      real,dimension(:),intent(out) :: v_yy
-
-      integer :: i,n
-
-      n = size(v,1)
-      
-      ! Interior
-      do i = fd2%nbst+1,n-fd2%nbst
-         v_yy(i) = dot_product(fd2%DI,v(i+fd2%mI:i+fd2%pI))
-      end do
-
-      ! Left boundary
-      do i = 0,fd2%nbst-1
-         v_yy(1 + i) = dot_product( fd2%DL(:, i),v(1:fd2%nbnd) ) 
-      end do
-    
-      ! Right boundary
-      do i = 0,fd2%nbst-1         
-         v_yy(n-i) = dot_product( fd2%DR(:,-i),v((n-fd2%nbnd+1):n) )
-      end do
-    
-
-  end subroutine
-
-  ! Differentiate the vector u on plus boundary (used by penalty terms)
-  pure function diff_bnd_p(u) result(v)
-
-      use fd_coeff, only: nbnd,DR
-
-      implicit none
-
-      real,dimension(:),intent(in) :: u
-      real :: v
-      integer :: n
-
-      n = size(u,1)
-
-      v = dot_product(u((n-nbnd+1):n),D1R(:,0))
-
-  end function
-  
-  ! Differentiate the vector u on minus boundary (used by penalty terms)
-  pure function diff_bnd_m(u) result(v)
-
-      use fd_coeff, only: nbnd,DL 
-
-      implicit none
-
-      real,dimension(:),intent(in) :: u
-      real :: v
-      integer :: n
-
-      n = size(u,1)
-
-      v = dot_product(u(1:nbnd),DL(:,0))
-
-  end function
-  
-  ! Compute Dv = Dv + D^T*g on minus boundary (used by penalty terms)
-  subroutine diff_T_bnd_m(Dv,g)
-      
-      use fd_coeff, only: nbnd,DL
-
-      implicit none
-
-      real,dimension(:),intent(inout) :: Dv
-      real,intent(in) :: g
-      
-      integer :: n
-
-      n = size(Dv,1)
-      
-      Dv(1:nbnd) = Dv(1:nbnd) + DL(:,0)*g
-
-  end subroutine
-
-  ! Compute Dv = Dv + D^T*g on plus boundary (used by penalty terms)
-  subroutine diff_T_bnd_p(Dv,g)
-      
-      use fd_coeff, only: nbnd,DR
-
-      implicit none
-
-      real,dimension(:),intent(inout) :: Dv
-      real,intent(in) :: g
-      
-      integer :: n
-
-      n = size(Dv,1)
-      
-      Dv((n-nbnd+1):n) = Dv((n-nbnd+1):n) + DR(:,0)*g
 
   end subroutine
 
