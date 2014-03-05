@@ -135,10 +135,9 @@ notintel:
 .SUFFIXES: .o .f90
 
 # DO NOT DELETE THIS LINE - used by make depend
-boundaries.o: fields.o friction.o geometry.o grid.o hydrofrac.o io.o mms.o
-boundaries.o: mpi_routines.o mpi_routines2d.o thermpres.o
+boundaries.o: fields.o geometry.o grid.o io.o mms.o mpi_routines.o
 
-checkpoint.o: boundaries.o domain.o fields.o io.o mpi_routines.o
+checkpoint.o: domain.o fields.o interfaces.o io.o mpi_routines.o
 
 domain.o: boundaries.o fd_coeff.o fields.o grid.o interfaces.o io.o material.o
 domain.o: mpi_routines.o mpi_routines2d.o source.o utilities.o
@@ -162,8 +161,8 @@ grid.o: utilities.o
 
 hydrofrac.o: fd.o fd_coeff.o io.o mpi_routines.o mpi_routines2d.o
 
-interfaces.o: boundaries.o fields.o friction.o geometry.o mpi_routines2d.o
-interfaces.o: thermpres.o
+interfaces.o: fields.o friction.o geometry.o grid.o hydrofrac.o io.o
+interfaces.o: mpi_routines.o mpi_routines2d.o thermpres.o
 
 io.o: mpi_routines.o
 
@@ -191,7 +190,7 @@ testio.o: io.o mpi_routines.o mpi_routines2d.o
 
 thermpres.o: io.o mpi_routines.o
 
-time_step.o: boundaries.o domain.o energy.o fields.o grid.o io.o material.o
+time_step.o: domain.o energy.o fields.o grid.o interfaces.o io.o material.o
 time_step.o: mpi_routines2d.o output.o plastic.o rates.o rates_heterogeneous.o
 time_step.o: source.o
 

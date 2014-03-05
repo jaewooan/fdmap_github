@@ -839,12 +839,6 @@ contains
         
     integer :: i
 
-    select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
-       FR%DPsi = 0d0
-       return
-    end select
-
     do i = m,p
        FR%DDs(i) = FR%DDs(i)+FR%V(i) ! shear (tangential) displacement discontinuity rate
        FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
