@@ -459,7 +459,7 @@ contains
     integer,intent(in) :: mode
     real,intent(in) :: t
 
-    real,dimension(:),allocatable :: phip,vnm,vnp
+    real,dimension(:),allocatable :: phip,vnm,vnp,vtm,vtp,sntm,sntp
 
     if (I%skip) return ! process has no grid points adjacent to interface
 
@@ -519,6 +519,10 @@ contains
        allocate(phip(I%m:I%p))
        allocate(vnm(I%m:I%p))
        allocate(vnp(I%m:I%p))
+       allocate(vtm(I%m:I%p))
+       allocate(vtp(I%m:I%p))
+       allocate(sntm(I%m:I%p))
+       allocate(sntp(I%m:I%p))
 
        ! set hat variables (Fhat) by balancing fluid and solid tractions
        ! and matching fluid and solid velocities
@@ -530,7 +534,7 @@ contains
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp,vtm,vtp,sntm,sntp)
        case('y')
 
           ! Fm = block fields on minus side (use bndFT = top    boundary of this block)
@@ -552,7 +556,7 @@ contains
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%HF,phip,vnm,vnp,vtm,vtp,sntm,sntp)
           ! output P-wave stress transfer phip from above subroutine
 
        end select
@@ -560,7 +564,7 @@ contains
        ! set rates for auxiliary fields (fluid velocity, pressure),
        ! passing in P-wave stress transfer phip, vnm, vnp
 
-       call set_rates_hydrofrac(I%HF,C,I%m,I%p,phip,vnm,vnp,I%x(I%m:I%p),I%y(I%m:I%p),t)
+       call set_rates_hydrofrac(I%HF,C,I%m,I%p,phip,vnm,vnp,vtm,vtp,sntm,sntp,I%x(I%m:I%p),I%y(I%m:I%p),t)
 
        deallocate(phip)
 
@@ -889,7 +893,7 @@ contains
   end subroutine frictional_interface_mode2
 
 
-  subroutine enforce_hydrofrac_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,HF,phip,vnm,vnp)
+  subroutine enforce_hydrofrac_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,HF,phip,vnm,vnp,vtm,vtp,sntm,sntp)
 
     use hydrofrac, only : hf_type
     use io, only : error
@@ -902,7 +906,7 @@ contains
     real,dimension(m:p),intent(in) :: x,y
     real,intent(in) :: t
     type(hf_type),intent(inout) :: HF
-    real,dimension(m:p),intent(out) :: phip,vnm,vnp
+    real,dimension(m:p),intent(out) :: phip,vnm,vnp,vtm,vtp,sntm,sntp
 
     integer :: i
 
@@ -910,7 +914,7 @@ contains
        select case(mode)
        case(2)
           call hydrofrac_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,HF,phip(i),vnm(i),vnp(i))
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,HF,phip(i),vnm(i),vnp(i),vtp(i),vtm(i),sntm(i),sntp(i))
        case(3)
           call error('No hydraulic fractures in antiplane shear','enforce_hydrofrac_interface')
        end select
@@ -919,21 +923,22 @@ contains
   end subroutine enforce_hydrofrac_interface
 
 
-  subroutine hydrofrac_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,HF,phip,vnm,vnp)
+  subroutine hydrofrac_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
+                                       gammam,gammap,x,y,t,i,HF,phip,vnm,vnp,vtm,vtp,sntm,sntp)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use hydrofrac, only : hf_type,fluid_stresses
 
     implicit none
 
-    real,intent(out) :: Fhatm(6),Fhatp(6),phip,vnm,vnp
+    real,intent(out) :: Fhatm(6),Fhatp(6),phip,vnm,vnp,vtm,vtp,sntm,sntp
     real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
     integer,intent(in) :: i
     type(hf_type),intent(inout) :: HF
 
     real :: Zsim,Zsip,Zpim,Zpip, &
-         vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-         vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
+            snnp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+            snnm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
     real :: etap,taum,taup,p
 
     ! naming convention:
@@ -970,7 +975,7 @@ contains
 
     ! shear and normal tractions exerted by the fluid on the solid walls
 
-    call fluid_stresses(HF,i,p,taum,taup)
+    call fluid_stresses(HF,i,p,taum,taup,vtm,vtp)
 
     ! balance normal tractions
 
@@ -999,6 +1004,11 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+
+    ! Send grid values to fluid
+
+    vtp = vtFDp
+    vtm = vtFDm
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 
