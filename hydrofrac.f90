@@ -425,7 +425,6 @@ contains
     do i = HF%L%m,HF%L%p
        HF%wm(i) = HF%wm(i)+dt*HF%Dwm(i)
        HF%wp(i) = HF%wp(i)+dt*HF%Dwp(i)
-       HF%u (i) = HF%u (i)+dt*HF%Du (i)
        HF%p (i) = HF%p (i)+dt*HF%Dp (i)
        HF%v(:,i) = HF%v(:,i)+dt*HF%Dv(:,i)
     end do
@@ -451,6 +450,9 @@ contains
     real,dimension(:),allocatable :: dudx,dpdx,b
 
     if (.not.HF%use_HF) return
+    
+    ! Width-average v to obtain u
+    call width_average(HF)
 
     ! populate ghost points of neighboring processors
 
@@ -460,8 +462,6 @@ contains
 
     allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p),b(HF%L%m:HF%L%p))
 
-    ! Width-average v to obtain u
-    call width_average(HF)
 
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
@@ -481,7 +481,6 @@ contains
 
 
     do i = HF%L%m,HF%L%p
-       HF%Du(i) = HF%Du(i)-dpdx(i)/HF%rho0
        HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
        HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/b(i)
     end do
@@ -684,6 +683,9 @@ contains
           HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
        end do
        HF%u = HF%u/(HF%n - 1)
+       do i = HF%L%m,HF%L%p
+          HF%u(i) = HF%v(1,i)
+       end do
 
   end subroutine
   
