@@ -448,7 +448,7 @@ contains
 
     integer :: i
     real :: uhat,phat
-    real,dimension(:),allocatable :: dudx,dpdx
+    real,dimension(:),allocatable :: dudx,dpdx,b
 
     if (.not.HF%use_HF) return
 
@@ -458,7 +458,7 @@ contains
 
     ! allocate auxiliary arrays
 
-    allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p))
+    allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p),b(HF%L%m:HF%L%p))
 
     ! Width-average v to obtain u
     call width_average(HF)
@@ -466,7 +466,12 @@ contains
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
 
-    call diff(HF%L,HF%u*(HF%wp0 - HF%wm0),dudx)
+    ! Setting b = HF%wp0 - HF%wm0 prevents a bug from occuring. Why this fix
+    ! works is currently not understood
+
+
+    b = HF%wp0 - HF%wm0
+    call diff(HF%L,HF%u*b,dudx)
     call diff(HF%L,HF%p,dpdx)
     dudx = dudx/HF%h
     dpdx = dpdx/HF%h
@@ -478,7 +483,7 @@ contains
     do i = HF%L%m,HF%L%p
        HF%Du(i) = HF%Du(i)-dpdx(i)/HF%rho0
        HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
-       HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/(HF%wp0(i) - HF%wm0(i))
+       HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/b(i)
     end do
     
     do i = HF%L%m,HF%L%p
@@ -545,7 +550,7 @@ contains
 
     ! deallocate temporary arrays
 
-    deallocate(dudx,dpdx)
+    deallocate(dudx,dpdx,b)
 
   end subroutine set_rates_hydrofrac
 
