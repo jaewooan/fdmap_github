@@ -213,8 +213,8 @@ contains
     ! allocate arrays and initialize with unreasonable values to facilitate debugging
 
     allocate( &
-         HF%wm (HF%L%m :HF%L%p ),HF%wp (HF%L%m :HF%L%p ), &
-         HF%wm0(HF%L%m :HF%L%p ),HF%wp0(HF%L%m :HF%L%p ), &
+         HF%wm (HF%L%mb :HF%L%pb ),HF%wp (HF%L%mb :HF%L%pb ), &
+         HF%wm0(HF%L%mb :HF%L%pb ),HF%wp0(HF%L%mb :HF%L%pb ), &
          HF%Dwm(HF%L%m :HF%L%p ),HF%Dwp(HF%L%m :HF%L%p ), &
          HF%u  (HF%L%mb:HF%L%pb),HF%p  (HF%L%mb:HF%L%pb), &
          HF%Du (HF%L%m :HF%L%p ),HF%Dp (HF%L%m :HF%L%p ), &
@@ -460,15 +460,11 @@ contains
 
     ! allocate auxiliary arrays
 
-    allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p),b(HF%L%m:HF%L%p))
+    allocate(dudx(HF%L%m:HF%L%p),dpdx(HF%L%m:HF%L%p),b(HF%L%mb:HF%L%pb))
 
 
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
-
-    ! Setting b = HF%wp0 - HF%wm0 prevents a bug from occuring. Why this fix
-    ! works is currently not understood
-
 
     b = HF%wp0 - HF%wm0
     call diff(HF%L,HF%u*b,dudx)
