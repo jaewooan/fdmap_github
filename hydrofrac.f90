@@ -446,7 +446,7 @@ contains
                        sntm(m:p),sntp(m:p),x(m:p),y(m:p),t
 
     integer :: i
-    real :: uhat,phat
+    real :: uhat,phat, Z
     real,dimension(:),allocatable :: dudx,dpdx,b
 
     if (.not.HF%use_HF) return
@@ -492,7 +492,7 @@ contains
        if (HF%linearized_walls) then
           if (HF%operator_splitting) then
              do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*phip(i)/(HF%wp0(i)-HF%wm0(i)) ! *INCORRECT*
+                HF%Dp(i) = HF%Dp(i)-0*HF%K0*phip(i)/(HF%wp0(i)-HF%wm0(i)) 
              end do
           else
              do i = HF%L%m,HF%L%p
@@ -583,17 +583,17 @@ contains
 
   end subroutine fluid_stresses
 
-  subroutine update_fields_hydrofrac_implicit(HF,m,p,Zm,Zp,dt)
+  subroutine update_fields_hydrofrac_implicit(HF,m,p,Zm,Zp,phip,dt)
   
     implicit none
 
     type(HF_type),intent(inout) :: HF
     integer,intent(in) :: m,p
-    real,dimension(m:p),intent(in) :: Zm,Zp ! P-wave impedances on minus,plus sides
+    real,dimension(m:p),intent(in) :: Zm,Zp,phip ! P-wave impedances on minus,plus sides
     real,intent(in) :: dt
 
     integer :: i
-    real :: Z
+    real :: Z,Zi
 
     if (.not.HF%operator_splitting) return ! return if fully explicit
 
@@ -601,9 +601,10 @@ contains
     
     if (HF%linearized_walls) then
        do i = m,p
-          Z = 1d0/(1d0/Zm(i)+1d0/Zp(i)) ! combine impedances of two sides
-          HF%p(i) = HF%p(i)*(1d0-dt*HF%K0/(Z*(HF%wp0(i)-HF%wm0(i)))) ! forward Euler
-          !HF%p(i) = HF%p(i)/(1d0+dt*HF%K0/(Z*(HF%wp0(i)-HF%wm0(i)))) ! backward Euler
+          Zi = (Zp(i) + Zm(i) )/(Zp(i)*Zm(i)) ! combine impedances of two sides
+          !HF%p(i) = HF%p(i)*(1d0-dt*HF%K0*Z/(HF%wp0(i)-HF%wm0(i))) ! forward Euler
+          HF%p(i) = (HF%p(i) -  dt*HF%K0*phip(i)/(HF%wp0(i)-HF%wm0(i)) ) &
+                    /(1d0+(dt*HF%K0*Zi)/(HF%wp0(i)-HF%wm0(i))) ! backward Euler
        end do
     else
        do i = m,p

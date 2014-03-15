@@ -399,6 +399,9 @@ contains
     type(iface_type),intent(inout) :: I
     type(block_fields),intent(in) :: Fm,Fp
     real,intent(in) :: dt
+    real,dimension(I%m:I%p) :: phip
+
+    integer,parameter :: mode = 2
 
     !real,dimension(:),allocatable :: f,sigma
 
@@ -420,9 +423,25 @@ contains
     case('hydrofrac')
        select case(I%direction)
        case('x')
-          call update_fields_hydrofrac_implicit(I%HF,I%m,I%p,Fm%bndFR%M(I%m:I%p,2),Fp%bndFL%M(I%m:I%p,2),dt)
+          ! x 
+          phip = get_phip(I%m,I%p, &
+               Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
+               Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p))
+          call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
+               Fm%bndFR%M(I%m:I%p,2),Fp%bndFL%M(I%m:I%p,2), &
+               phip,dt)
        case('y')
-          call update_fields_hydrofrac_implicit(I%HF,I%m,I%p,Fm%bndFT%M(I%m:I%p,2),Fp%bndFB%M(I%m:I%p,2),dt)
+          ! y
+          phip = get_phip(I%m,I%p, &
+               Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
+               Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
+               I%nhat(I%m:I%p,:),mode, &
+               I%x(I%m:I%p),I%y(I%m:I%p))
+          call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
+               Fm%bndFT%M(I%m:I%p,2),Fp%bndFB%M(I%m:I%p,2), &
+               phip,dt)
        end select
 
     end select
@@ -1012,10 +1031,66 @@ contains
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 
-    etap = 1d0/(Zpip+Zpim)
-    phip = etap*(snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm)
+    !etap = 1d0/(Zpip+Zpim)
+    !phip = etap*(snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm)
+    
+    phip =  snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm
 
   end subroutine hydrofrac_interface_mode2
+
+  function get_phip(m,p,Fm,Fp,Mm,Mp,nhat,mode,x,y) result(phip)
+
+    use hydrofrac, only : hf_type
+
+    implicit none
+
+    integer,intent(in) :: m,p,mode
+    real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
+    real,dimension(m:p),intent(in) :: x,y
+    real,dimension(m:p) :: phip
+
+    integer :: i
+
+    do i = m,p
+       select case(mode)
+       case(2)
+          phip(i) = get_phip_mode2(Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i))
+       end select
+    end do
+    
+ end function get_phip
+
+ function get_phip_mode2(Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
+                                       gammam,gammap,x,y) result(phip)
+
+    use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
+    use hydrofrac, only : hf_type,fluid_stresses
+
+    implicit none
+
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y
+
+    real :: Zpim,Zpip, &
+            snnp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+            snnm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
+    real :: phip
+
+    ! rotate into local normal and tangential coordinates
+
+    call rotate_fields_xy2nt(Fp,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
+    call rotate_fields_xy2nt(Fm,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
+
+    ! reciprocal impedances
+
+    Zpip = 1d0/Zpp
+    Zpim = 1d0/Zpm
+
+    ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
+    
+    phip =  snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm
+
+ end function get_phip_mode2 
 
 
 end module interfaces
