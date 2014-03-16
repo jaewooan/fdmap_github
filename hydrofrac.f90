@@ -92,15 +92,15 @@ contains
     character(256) :: HFstr
     character(256) :: str
 
-    logical :: hydrofrac_file,coupled,linearized_walls,source_term,operator_splitting,inviscid
+    logical :: coupled,linearized_walls,source_term,operator_splitting,inviscid
     integer :: n,i,j
     real :: rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource
-    character(256) :: filename
+    character(256) :: geom_file,initial_conds_file
     character(4) :: FDmethod
     integer,parameter :: nb=3 ! number of additional boundary (ghost) points needed for FD operators
 
     namelist /hydrofrac_list/ rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
-         n,coupled,linearized_walls,source_term,operator_splitting,hydrofrac_file,filename, &
+         n,coupled,linearized_walls,source_term,operator_splitting,geom_file,initial_conds_file, &
          inviscid,FDmethod
 
     ! defaults
@@ -117,11 +117,11 @@ contains
     n = 1
     coupled = .true.
     linearized_walls = .false.
-    hydrofrac_file = .false.
     source_term = .true.
     operator_splitting = .true.
     inviscid = .true.
-    filename = ''
+    geom_file = ''
+    initial_conds_file = ''
     FDmethod = 'SBP6'
 
     ! read in hydraulic fracture parameters
@@ -221,8 +221,8 @@ contains
          HF%v (HF%n,HF%L%m:HF%L%p), &
          HF%Dv(HF%n,HF%L%m:HF%L%p), &
          HF%Hw(HF%n), &
-         HF%hy(HF%L%m:HF%L%p), &
-         HF%SATyp(4,HF%L%m:HF%L%p ),HF%SATym(4,HF%L%m:HF%L%p ), &
+         HF%hy(HF%L%mb:HF%L%pb), &
+         HF%SATyp(4,HF%L%m:HF%L%p ),HF%SATym(4,HF%L%m:HF%L%p ) &
             )
 
     HF%wm0 = 1d40
@@ -252,11 +252,17 @@ contains
 
     ! override uniform initial conditions with those from file, if desired
 
-    if (hydrofrac_file) then
-       ! both sides read file (so process may read file twice)
-       if (process_m) call read_hydrofrac(HF,filename,comm_m,array)
-       if (process_p) call read_hydrofrac(HF,filename,comm_p,array)
-    end if
+     if (geom_file /= '' ) then
+        ! both sides read file (so process may read file twice)
+        if (process_m) call read_hydrofrac_geom(HF,geom_file,comm_m,array)
+        if (process_p) call read_hydrofrac_geom(HF,geom_file,comm_p,array)
+     end if
+     
+     if (initial_conds_file /= '' ) then
+        ! both sides read file (so process may read file twice)
+        if (process_m) call read_hydrofrac_initial_conds(HF,initial_conds_file,comm_m,array)
+        if (process_p) call read_hydrofrac_initial_conds(HF,initial_conds_file,comm_p,array)
+     end if
 
     ! current (=initial) wall positions
 
@@ -283,16 +289,35 @@ contains
         !HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i) 
     end do
     
-    ! Initialize Gaussian perturbation across hydrofrac cross-section
-     ! do i = 0,HF%n
-     !     HF%v(i,:) = exp(-0.1*(HF%hy(i)*i - HF%wp0(i))**2)
-     ! end do
 
   end subroutine init_hydrofrac
 
 
+   subroutine read_hydrofrac_geom(HF,geom_file,comm,array)
 
-  subroutine read_hydrofrac(HF,filename,comm,array)
+     use io, only : file_distributed,open_file_distributed, &
+          read_file_distributed,close_file_distributed
+     use mpi_routines, only : pw
+
+     implicit none
+
+     type(hf_type),intent(inout) :: HF
+     character(*),intent(in) :: geom_file
+     integer,intent(in) :: comm,array
+
+     integer :: j
+     type(file_distributed) :: fh
+
+     call open_file_distributed(fh,geom_file,'read',comm,array,pw)
+
+     call read_file_distributed(fh,HF%wm0(HF%L%m:HF%L%p))
+     call read_file_distributed(fh,HF%wp0(HF%L%m:HF%L%p))
+
+     call close_file_distributed(fh)
+
+   end subroutine read_hydrofrac_geom
+  
+  subroutine read_hydrofrac_initial_conds(HF,initial_conds_file,comm,array)
 
     use io, only : file_distributed,open_file_distributed, &
          read_file_distributed,close_file_distributed
@@ -301,25 +326,24 @@ contains
     implicit none
 
     type(hf_type),intent(inout) :: HF
-    character(*),intent(in) :: filename
+    character(*),intent(in) :: initial_conds_file
     integer,intent(in) :: comm,array
 
     integer :: j
     type(file_distributed) :: fh
 
-    call open_file_distributed(fh,filename,'read',comm,array,pw)
+    call open_file_distributed(fh,initial_conds_file,'read',comm,array,pw)
 
-    call read_file_distributed(fh,HF%wm0(HF%L%m:HF%L%p))
-    call read_file_distributed(fh,HF%wp0(HF%L%m:HF%L%p))
+     do j = 1,HF%n
+        call read_file_distributed(fh,HF%v(j,HF%L%m:HF%L%p))
+     end do
+
     call read_file_distributed(fh,HF%u  (HF%L%m:HF%L%p))
     call read_file_distributed(fh,HF%p  (HF%L%m:HF%L%p))
-    do j = 1,HF%n
-       call read_file_distributed(fh,HF%v(j,HF%L%m:HF%L%p))
-    end do
 
     call close_file_distributed(fh)
 
-  end subroutine read_hydrofrac
+  end subroutine read_hydrofrac_initial_conds
 
 
   subroutine destroy_hydrofrac(HF)
@@ -550,7 +574,6 @@ contains
   end subroutine set_rates_hydrofrac
 
 
-
   subroutine fluid_stresses(HF,i,p,taum,taup,vtm,vtp)
 
     implicit none
@@ -680,9 +703,6 @@ contains
           HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
        end do
        HF%u = HF%u/(HF%n - 1)
-       do i = HF%L%m,HF%L%p
-          HF%u(i) = HF%v(1,i)
-       end do
 
   end subroutine
   
