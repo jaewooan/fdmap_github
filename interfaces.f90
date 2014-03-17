@@ -399,7 +399,7 @@ contains
     type(iface_type),intent(inout) :: I
     type(block_fields),intent(in) :: Fm,Fp
     real,intent(in) :: dt
-    real,dimension(I%m:I%p) :: phip
+    real,dimension(I%m:I%p) :: phip,vtFDp,vtFDm
 
     integer,parameter :: mode = 2
 
@@ -424,24 +424,24 @@ contains
        select case(I%direction)
        case('x')
           ! x 
-          phip = get_phip(I%m,I%p, &
+          call get_hydrofrac_interface(I%m,I%p, &
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p))
+               I%x(I%m:I%p),I%y(I%m:I%p),phip,vtFDp,vtFDm)
           call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
                Fm%bndFR%M(I%m:I%p,2),Fp%bndFL%M(I%m:I%p,2), &
-               phip,dt)
+               phip,vtFDp,vtFDm,dt)
        case('y')
           ! y
-          phip = get_phip(I%m,I%p, &
+          call get_hydrofrac_interface(I%m,I%p, &
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p))
+               I%x(I%m:I%p),I%y(I%m:I%p),phip,vtFDp,vtFDm)
           call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
                Fm%bndFT%M(I%m:I%p,2),Fp%bndFB%M(I%m:I%p,2), &
-               phip,dt)
+               phip,vtFDp,vtFDm,dt)
        end select
 
     end select
@@ -1038,31 +1038,36 @@ contains
 
   end subroutine hydrofrac_interface_mode2
 
-  function get_phip(m,p,Fm,Fp,Mm,Mp,nhat,mode,x,y) result(phip)
+  subroutine get_hydrofrac_interface(m,p,Fm,Fp,Mm,Mp,nhat,mode,x,y, &
+                                     phip,vtFDp,vtFDm)
 
     use hydrofrac, only : hf_type
+    use io, only : error
 
     implicit none
 
     integer,intent(in) :: m,p,mode
     real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
     real,dimension(m:p),intent(in) :: x,y
-    real,dimension(m:p) :: phip
+    real,dimension(m:p),intent(out) :: phip,vtFDp,vtFDm
 
     integer :: i
 
     do i = m,p
        select case(mode)
        case(2)
-          phip(i) = get_phip_mode2(Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i))
+          call get_hydrofrac_interface_mode2(Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i), &
+               phip(i),vtFDp(i),vtFDm(i))
+       case(3)
+          call error('No hydraulic fractures in antiplane shear','enforce_hydrofrac_interface')
        end select
     end do
     
- end function get_phip
+ end subroutine get_hydrofrac_interface
 
- function get_phip_mode2(Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
-                                       gammam,gammap,x,y) result(phip)
+ subroutine get_hydrofrac_interface_mode2(Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
+                                       gammam,gammap,x,y,phip,vtFDp,vtFDm)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use hydrofrac, only : hf_type,fluid_stresses
@@ -1072,9 +1077,10 @@ contains
     real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y
 
     real :: Zpim,Zpip, &
-            snnp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-            snnm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real :: phip
+            snnp,sttp,szzp,vnFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
+            snnm,sttm,szzm,vnFDm,snnFDm,sntFDm,sttFDm,szzFDm
+    real,intent(out) :: phip,vtFDp, &
+                             vtFDm
 
     ! rotate into local normal and tangential coordinates
 
@@ -1090,7 +1096,7 @@ contains
     
     phip =  snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm
 
- end function get_phip_mode2 
+ end subroutine get_hydrofrac_interface_mode2 
 
 
 end module interfaces

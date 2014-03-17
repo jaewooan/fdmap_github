@@ -14,6 +14,7 @@ module hydrofrac
   ! DI = interior derivative coefficients
   ! DL/DR = left/right boundary derivative coefficients
   ! D1L/D1R = first derivative boundary coefficients
+  ! D2 = full second derivative matrix including boundary treatment (used by implicit solve)
   ! H1Li/H1Ri = inverted diagonal norm coefficients near boundaries (needed by penalty terms of the
   ! form D^T)
   ! HL/HR = diagonal norm entries near boundary (normalized so H=1 in interior)
@@ -22,9 +23,10 @@ module hydrofrac
     integer :: nI,mI,pI,nbnd,nbst,nD1
     real :: H00i
     real,dimension(:),allocatable :: DI,DmI,DpI,HL,HR,D1L,D1R,HLi,HRi
-    real,dimension(:,:),allocatable :: DL,DR
+    real,dimension(:,:),allocatable :: DL,DR,D2
     character(4) :: FDmethod
   end type
+
 
   ! USE_HF = flag indicating hydraulic fracture
   ! BNDM,BNDP = process is responsible for minus/plus boundary 
@@ -62,8 +64,8 @@ module hydrofrac
      integer :: n
      character(1) :: direction
      real :: rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw,hy
-     real,dimension(:,:),allocatable :: v,Dv,SATyp,SATym
+     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym
+     real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
      type(fd2_type) :: fd2
   end type hf_type
@@ -204,11 +206,6 @@ contains
     ! where L%m:L%p  = range of indices handled by process
     ! and  L%mb:L%pb = range of indices including ghost points
 
-    ! Initialize second derivative SBP operator
-    if( .not. inviscid) then
-        HF%fd2%FDmethod = FDmethod
-        call init_fd2(FDmethod,HF%fd2)
-    end if 
 
     ! allocate arrays and initialize with unreasonable values to facilitate debugging
 
@@ -222,7 +219,7 @@ contains
          HF%Dv(HF%n,HF%L%m:HF%L%p), &
          HF%Hw(HF%n), &
          HF%hy(HF%L%mb:HF%L%pb), &
-         HF%SATyp(4,HF%L%m:HF%L%p ),HF%SATym(4,HF%L%m:HF%L%p ) &
+         HF%SATyp(4),HF%SATym(4) &
             )
 
     HF%wm0 = 1d40
@@ -247,8 +244,6 @@ contains
     HF%u = 0d0
     HF%v = 0d0
     HF%p = 0d0
-    
-    !HF%p(HF%L%m:HF%L%p) = exp(-x**2) ! gaussian initial condition (hard-coded)
 
     ! override uniform initial conditions with those from file, if desired
 
@@ -280,14 +275,17 @@ contains
 
     ! Set SAT penalty weights for viscous terms
     ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
-    do i = HF%L%m,HF%L%p
-        ! Impose velocities only
-        HF%SATym(:,i) =   HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i)
-        HF%SATyp(:,i) = - HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)/HF%hy(i) 
-        ! Impose stresses only
-        !HF%SATym(:,i) =   HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i)
-        !HF%SATyp(:,i) = - HF%fd2%H00i*HF%mu/HF%rho0*(/  0d0, 1d0, 0d0, 0d0  /)/HF%hy(i) 
-    end do
+
+    ! Impose velocities only
+    HF%SATym(:) =   HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)
+    HF%SATyp(:) = - HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /) 
+    
+    ! Initialize second derivative SBP operator
+    if( .not. inviscid) then
+        HF%fd2%FDmethod = FDmethod
+        call init_fd2(FDmethod,HF%fd2)
+        if(operator_splitting) call init_fd2_full(HF,HF%n)
+    end if 
     
 
   end subroutine init_hydrofrac
@@ -368,6 +366,18 @@ contains
     if (allocated(HF%hy )) deallocate(HF%hy )
     if (allocated(HF%SATyp )) deallocate(HF%SATyp )
     if (allocated(HF%SATym )) deallocate(HF%SATym )
+    if (allocated(HF%fd2%D2 )) deallocate(HF%fd2%D2)
+    if (allocated(HF%fd2%DI )) deallocate(HF%fd2%DI)
+    if (allocated(HF%fd2%DmI )) deallocate(HF%fd2%DmI)
+    if (allocated(HF%fd2%DpI )) deallocate(HF%fd2%DpI)
+    if (allocated(HF%fd2%D1L )) deallocate(HF%fd2%D1L)
+    if (allocated(HF%fd2%D1R )) deallocate(HF%fd2%D1R)
+    if (allocated(HF%fd2%HL )) deallocate(HF%fd2%HL)
+    if (allocated(HF%fd2%HR )) deallocate(HF%fd2%HR)
+    if (allocated(HF%fd2%HLi )) deallocate(HF%fd2%HLi)
+    if (allocated(HF%fd2%HRi )) deallocate(HF%fd2%HRi)
+    if (allocated(HF%fd2%DL )) deallocate(HF%fd2%DL)
+    if (allocated(HF%fd2%DR )) deallocate(HF%fd2%DR)
 
   end subroutine destroy_hydrofrac
 
@@ -606,17 +616,23 @@ contains
 
   end subroutine fluid_stresses
 
-  subroutine update_fields_hydrofrac_implicit(HF,m,p,Zm,Zp,phip,dt)
+  subroutine update_fields_hydrofrac_implicit(HF,m,p,Zm,Zp,phip,vtp,vtm,dt)
   
     implicit none
 
     type(HF_type),intent(inout) :: HF
     integer,intent(in) :: m,p
-    real,dimension(m:p),intent(in) :: Zm,Zp,phip ! P-wave impedances on minus,plus sides
+    real,dimension(m:p),intent(in) :: Zm,Zp,phip, & ! P-wave impedances on minus,plus sides
+                                      vtp,vtm ! tangential solid velocities on
+                                              ! plus, minus sides
     real,intent(in) :: dt
 
-    integer :: i
+    integer :: i,j,info
     real :: Z,Zi
+    real,dimension(HF%n) :: b ! Right hand side vector containing boundary terms 
+                              ! and solution at previous time step
+    real,dimension(HF%n,HF%n) :: A ! matrix to LU decompose
+    integer :: ipiv(HF%n)
 
     if (.not.HF%operator_splitting) return ! return if fully explicit
 
@@ -639,10 +655,26 @@ contains
 
     ! implicit update for viscous diffusion terms
 
-    !do i = m,p
+    if(HF%inviscid) return ! Return if inviscid
+
+    ! Solve (I - dt/h^2*M)v^N+1 = v^N + dt*b 
+    ! M contains D2 operator and SAT penalty terms
+
+    do i = m,p
+       b = HF%v(:,i)
+       call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       A =  - dt*HF%fd2%D2/HF%hy(i)**2
+       ! Add identity matrix
+       do j=1,HF%n
+       A(j,j) = A(j,j) + 1
+       end do
+       call dgesv(HF%n,1,A,HF%n,ipiv,b,HF%n,info)
+       HF%v(:,i) = b
+       !call dgesv( n, nrhs, A, lda, ipiv, b, ldb, info )
        !HF%v(:,i) = HF%v(:,i)+dt*mu*v_yy ! forward Euler
        !call solve_linear_system(HF%v(:,i),...) ! backward Euler
-    !end do
+    end do
 
     ! use LAPACK for linear system solve
     ! call dgesv(...)
@@ -719,11 +751,13 @@ contains
       integer :: i
 
       if(HF%inviscid) return
+      if(HF%operator_splitting) return
 
       allocate(v_yy(HF%n))
       v_yy = 0d0
     
       ! and viscous terms (explicit time-stepping)
+      ! SAT terms impose velocities in the fluid
 
       do i = HF%L%m,HF%L%p
          call second_derivative(HF%fd2,HF%v(:,i),v_yy)
@@ -734,14 +768,14 @@ contains
          ! Penalty terms not used
          !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%fd2%H00i*HF%v(1,i)
          !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2,i)*HF%fd2%H00i*(diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)) 
-         gm = HF%SATym(3,i)*( HF%v(1,i)  - vtp(i) )/HF%hy(i)
+         gm = HF%SATym(3)*( HF%v(1,i)  - vtp(i) )/HF%hy(i)**2
          call diff_T_bnd_m(HF%Dv(:,i),gm,HF%fd2)
 
          ! SAT terms, plus boundary
          ! Penalty terms not used
          !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1,i)*HF%fd2%H00i*HF%v(i,HF%n)
          !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2,i)*HF%fd2%H00i*(diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i))
-         gp = HF%SATyp(3,i)*( HF%v(HF%n,i) - vtm(i) )/HF%hy(i)
+         gp = HF%SATyp(3)*( HF%v(HF%n,i) - vtm(i) )/HF%hy(i)**2
          call diff_T_bnd_p(HF%Dv(:,i),gp,HF%fd2)
       end do
 
@@ -993,4 +1027,63 @@ contains
 
   end subroutine
 
+  ! Construct full, second derivative matrix of size n x n (used for linear system solve)
+  subroutine init_fd2_full(HF,n)
+
+      implicit none
+
+      type(hf_type),intent(inout) :: HF
+      integer,intent(in) :: n
+
+      integer :: i
+      real :: DT_BL, DT_BR
+
+
+      allocate(HF%fd2%D2(n,n))
+      HF%fd2%D2 = 0d0
+
+      ! Put second derivative stencils in matrix
+      
+      ! Interior
+      do i = HF%fd2%nbst+1,n-HF%fd2%nbst
+         HF%fd2%D2(i,i+HF%fd2%mI:i+HF%fd2%pI) = HF%fd2%DI
+      end do
+
+      ! Left boundary
+      do i = 0,HF%fd2%nbst-1
+         HF%fd2%D2(1 + i,:) = HF%fd2%DL(:, i)
+      end do
+    
+      ! Right boundary
+      do i = 0,HF%fd2%nbst-1         
+         HF%fd2%D2(n - i,n - HF%fd2%nbnd+1:n ) = HF%fd2%DR(:,-i)
+      end do
+
+      ! SAT penalty matrices
+      ! D2*v + BLm*(v - g) + BLD*(Dv - g) + D^TBL*(v - g) + D^TBLD*(v - g) 
+
+      ! Starting by implementing velocities in the fluid only 
+      !gm = *( HF%v(1,i)  - vtp(i) )/HF%hy(i)
+      HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(3),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(3),HF%fd2)
+
+      ! Used for debugging
+      !call print_matrix(HF%fd2%D2)
+
+  end subroutine
+
+
+subroutine print_matrix(A)
+      implicit none
+
+      real(kind=8),dimension(:,:),intent(in) :: A
+      integer :: i
+
+      do i=1,size(A,1) 
+        print *,A(i,:)
+        ! write (*,'(F10.2)') A(i,:)
+        ! print *,""
+      end do
+end subroutine 
 end module hydrofrac
