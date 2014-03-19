@@ -569,7 +569,7 @@ contains
        HF%Dp(i) = HF%Dp(i)-HF%SATp*(HF%p(i)-phat)
     end if
     
-    if (HF%coupled) return
+    if (.not. HF%coupled) return
 
     ! and then adding crack opening/closing term in mass balance
 
@@ -667,14 +667,33 @@ contains
 
     ! implicit update for pressure
     
-    if (HF%linearized_walls) then
+    if (HF%linearized_walls .and. .not. HF%slope) then
        do i = m,p
           Zi = (Zp(i) + Zm(i) )/(Zp(i)*Zm(i)) ! combine impedances of two sides
           !HF%p(i) = HF%p(i)*(1d0-dt*HF%K0*Z/(HF%wp0(i)-HF%wm0(i))) ! forward Euler
           HF%p(i) = (HF%p(i) -  dt*HF%K0*phip(i)/(HF%wp0(i)-HF%wm0(i)) ) &
                     /(1d0+(dt*HF%K0*Zi)/(HF%wp0(i)-HF%wm0(i))) ! backward Euler
+              ! HF%Dp(i) = HF%Dp(i)+HF%K0*(vtp(i)*HF%dwp0dx(i) - vtm(i)*HF%dwm0dx(i))/(HF%wp0(i)-HF%wm0(i))
        end do
-    else
+    end if
+    ! Implicit update with geometric correction
+
+    if (HF%linearized_walls .and. HF%slope) then
+       do i = m,p
+          Zi = (Zp(i) + Zm(i) )/(Zp(i)*Zm(i)) ! combine impedances of two sides
+          !HF%p(i) = HF%p(i)*(1d0-dt*HF%K0*Z/(HF%wp0(i)-HF%wm0(i))) ! forward Euler
+          HF%p(i) = (HF%p(i) -  dt*HF%K0*& 
+                        (       &
+                            phip(i) - vtp(i)*HF%dwp0dx(i) + vtm(i)*HF%dwm0dx(i) &
+                        )       &              
+                        /(HF%wp0(i)-HF%wm0(i)) &
+                    ) &
+                    /(1d0+(dt*HF%K0*Zi)/(HF%wp0(i)-HF%wm0(i))) ! backward Euler
+               ! HF%Dp(i) = HF%Dp(i)+HF%K0*()/(HF%wp0(i)-HF%wm0(i))
+       end do
+    end if
+    
+    if (.not. HF%linearized_walls) then
        do i = m,p
           Z = 1d0/(1d0/Zm(i)+1d0/Zp(i)) ! combine impedances of two sides
           ! at what time should we use wp-wm?
