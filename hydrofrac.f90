@@ -60,11 +60,11 @@ module hydrofrac
   ! fd2_type  = finite difference second derivative operator
 
   type :: hf_type
-     logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid
+     logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid,slope
      integer :: n
      character(1) :: direction
      real :: rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym
+     real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym
      real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
      type(fd2_type) :: fd2
@@ -241,18 +241,31 @@ contains
     HF%wm0 = -w0
     HF%wp0 =  w0
 
+    ! Slope profile (only used if profiles are read from file)
+    HF%slope = .false.
+
     HF%u = 0d0
     HF%v = 0d0
     HF%p = 0d0
 
-    ! override uniform initial conditions with those from file, if desired
+     ! Load non planar profiles
 
      if (geom_file /= '' ) then
+
+        allocate(HF%dwm0dx(HF%L%m:HF%L%p),HF%dwp0dx(HF%L%m:HF%L%p))
+
         ! both sides read file (so process may read file twice)
         if (process_m) call read_hydrofrac_geom(HF,geom_file,comm_m,array)
         if (process_p) call read_hydrofrac_geom(HF,geom_file,comm_p,array)
-     end if
+
+        HF%slope = .true.
+
+    end if
+
+
      
+    ! override uniform initial conditions with those from file, if desired
+
      if (initial_conds_file /= '' ) then
         ! both sides read file (so process may read file twice)
         if (process_m) call read_hydrofrac_initial_conds(HF,initial_conds_file,comm_m,array)
@@ -310,6 +323,8 @@ contains
 
      call read_file_distributed(fh,HF%wm0(HF%L%m:HF%L%p))
      call read_file_distributed(fh,HF%wp0(HF%L%m:HF%L%p))
+     call read_file_distributed(fh,HF%dwm0dx(HF%L%m:HF%L%p))
+     call read_file_distributed(fh,HF%dwp0dx(HF%L%m:HF%L%p))
 
      call close_file_distributed(fh)
 
@@ -352,6 +367,8 @@ contains
 
     if (allocated(HF%wm0)) deallocate(HF%wm0)
     if (allocated(HF%wp0)) deallocate(HF%wp0)
+    if (allocated(HF%dwm0dx)) deallocate(HF%dwm0dx)
+    if (allocated(HF%dwp0dx)) deallocate(HF%dwp0dx)
     if (allocated(HF%wm )) deallocate(HF%wm )
     if (allocated(HF%wp )) deallocate(HF%wp )
     if (allocated(HF%u  )) deallocate(HF%u  )
@@ -520,31 +537,6 @@ contains
        HF%Dwm(i) = HF%Dwm(i) + vnm(i)
     end do
 
-    ! and then adding crack opening/closing term in mass balance
-
-    if (HF%coupled) then
-       if (HF%linearized_walls) then
-          if (HF%operator_splitting) then
-             do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-0*HF%K0*phip(i)/(HF%wp0(i)-HF%wm0(i)) 
-             end do
-          else
-             do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp0(i)-HF%wm0(i))
-             end do
-          end if
-       else
-          if (HF%operator_splitting) then
-             do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*phip(i)/(HF%wp(i)-HF%wm(i)) ! *INCORRECT*
-             end do
-          else
-             do i = HF%L%m,HF%L%p
-                HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp(i)-HF%wm(i))
-             end do
-          end if
-       end if
-    end if
 
     ! and source terms (explosion source only appears in mass balance)
 
@@ -575,6 +567,37 @@ contains
        phat = HF%p(i)+HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
        HF%Du(i) = HF%Du(i)-HF%SATp*(HF%u(i)-uhat)
        HF%Dp(i) = HF%Dp(i)-HF%SATp*(HF%p(i)-phat)
+    end if
+    
+    if (HF%coupled) return
+
+    ! and then adding crack opening/closing term in mass balance
+
+    if (HF%linearized_walls .and. .not. HF%operator_splitting) then
+        ! Couple to solid without geometric correction
+        do i = HF%L%m,HF%L%p
+           HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp0(i)-HF%wm0(i))
+        end do
+
+        ! Add geometric correction
+        if(HF%slope) then
+           do i = HF%L%m,HF%L%p
+              HF%Dp(i) = HF%Dp(i)+HF%K0*(vtp(i)*HF%dwp0dx(i) - vtm(i)*HF%dwm0dx(i))/(HF%wp0(i)-HF%wm0(i))
+           end do
+        end if
+    end if
+
+    ! TODO: Implement this properly
+    if (.not. HF%linearized_walls) then
+       if (HF%operator_splitting) then
+          do i = HF%L%m,HF%L%p
+             HF%Dp(i) = HF%Dp(i)-HF%K0*phip(i)/(HF%wp(i)-HF%wm(i)) ! *INCORRECT*
+          end do
+       else
+          do i = HF%L%m,HF%L%p
+             HF%Dp(i) = HF%Dp(i)-HF%K0*(vnp(i)-vnm(i))/(HF%wp(i)-HF%wm(i))
+          end do
+       end if
     end if
 
     ! deallocate temporary arrays
@@ -613,6 +636,12 @@ contains
     ! Viscous case
     taum = HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
     taup = HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
+
+    ! Add geometric correction
+    if(.not. HF%slope) return
+
+    taum = taum + HF%p(i)*HF%dwm0dx(i)
+    taup = taup + HF%p(i)*HF%dwp0dx(i)
 
   end subroutine fluid_stresses
 
@@ -671,13 +700,7 @@ contains
        end do
        call dgesv(HF%n,1,A,HF%n,ipiv,b,HF%n,info)
        HF%v(:,i) = b
-       !call dgesv( n, nrhs, A, lda, ipiv, b, ldb, info )
-       !HF%v(:,i) = HF%v(:,i)+dt*mu*v_yy ! forward Euler
-       !call solve_linear_system(HF%v(:,i),...) ! backward Euler
     end do
-
-    ! use LAPACK for linear system solve
-    ! call dgesv(...)
 
   end subroutine update_fields_hydrofrac_implicit
 
