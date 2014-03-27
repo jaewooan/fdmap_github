@@ -262,8 +262,6 @@ contains
 
     end if
 
-
-     
     ! override uniform initial conditions with those from file, if desired
 
      if (initial_conds_file /= '' ) then
@@ -325,6 +323,7 @@ contains
      call read_file_distributed(fh,HF%wp0(HF%L%m:HF%L%p))
      call read_file_distributed(fh,HF%dwm0dx(HF%L%m:HF%L%p))
      call read_file_distributed(fh,HF%dwp0dx(HF%L%m:HF%L%p))
+
 
      call close_file_distributed(fh)
 
@@ -630,6 +629,12 @@ contains
     ! Inviscid case
     taum = 0d0
     taup = 0d0
+    
+    ! Add geometric correction
+    if(HF%slope) then
+      taum = taum + HF%p(i)*HF%dwm0dx(i)
+      taup = taup + HF%p(i)*HF%dwp0dx(i)
+    end if
 
     if(HF%inviscid) return
 
@@ -637,11 +642,6 @@ contains
     taum = HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
     taup = HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
 
-    ! Add geometric correction
-    if(.not. HF%slope) return
-
-    taum = taum + HF%p(i)*HF%dwm0dx(i)
-    taup = taup + HF%p(i)*HF%dwp0dx(i)
 
   end subroutine fluid_stresses
 
@@ -739,6 +739,14 @@ contains
          HF%bndm,HF%bndp,HF%u,HF%direction)
     call populate_ghost_cells(C,HF%L%m,HF%L%p,HF%L%nb, &
          HF%bndm,HF%bndp,HF%p,HF%direction)
+
+    ! Communicate initial wall positions
+    ! TODO: This communication only needs to happen once 
+    ! (unless we use time dependent walls)
+    call populate_ghost_cells(C,HF%L%m,HF%L%p,HF%L%nb, &
+         HF%bndm,HF%bndp,HF%wm0,HF%direction)
+    call populate_ghost_cells(C,HF%L%m,HF%L%p,HF%L%nb, &
+         HF%bndm,HF%bndp,HF%wp0,HF%direction)
 
   end subroutine share_hydrofrac
   
