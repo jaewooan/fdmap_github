@@ -41,7 +41,7 @@ contains
   subroutine init_domain(D,t,refine,CFL,dt,input,echo,cRK)
 
     use material, only : init_material,init_pml
-    use grid, only : read_grid,block_limits,init_grid,init_grid_partials
+    use grid, only : read_grid,write_grid,set_refine,block_limits,init_grid,init_grid_partials
     use fields, only : init_fields,exchange_fields
     use interfaces, only : init_iface,init_iface_blocks,init_iface_fields
     use boundaries, only : init_boundaries
@@ -177,9 +177,24 @@ contains
     allocate(blkxm(D%nblocks),blkym(D%nblocks))
 
     do i = 1,D%nblocks
-       call read_grid(i,D%B(i)%G,refine,input,echo)
+       call read_grid(i,D%B(i)%G,input)
+    end do
+    
+    ! Set grid indices (mgx,mgy,iblock_x,iblock_y) for all blocks
+    call set_grid_indices(D%B,nblocks_x,nblocks_y)
+    
+    do i = 1,D%nblocks
+       call set_refine(i,D%B(i)%G,refine)
+    end do
+    
+    do i = 1,D%nblocks
        call block_limits(D%B(i)%G,blkxm(i),blkym(i))
     end do
+
+    do i = 1,D%nblocks
+       call write_grid(i,D%B(i)%G,echo)
+    end do
+
 
     ! MPI decomposition of global 2D domain
 
@@ -1307,6 +1322,46 @@ contains
     end if
 
   end subroutine set_dt
+  
+  subroutine set_grid_indices(B,nblocks_x,nblocks_y)
+
+      implicit none
+
+      type(block_type),intent(inout),dimension(*) :: B
+      integer,intent(in) :: nblocks_x,nblocks_y
+
+      integer :: ix,iy
+      
+      integer :: mgx(1:nblocks_x),pgx(1:nblocks_x), & 
+                 mgy(1:nblocks_y),pgy(1:nblocks_y)
+
+      mgx(1) = 1
+      pgx(1) = B(1)%G%nx
+      mgy(1) = 1
+      pgy(1) = B(1)%G%ny
+
+      ! mgx
+      do ix = 2,nblocks_x
+       mgx(ix) = mgx(ix-1) + B(ix-1)%G%nx
+      end do
+      
+      ! mgy
+      do iy = 2,nblocks_y
+       mgy(iy) = mgy(iy-1) + B(1 + (iy-2)*nblocks_x)%G%ny
+      end do
+
+      ! Update mgx, mgy, iblock_x, and iblock_y for each block
+      do ix = 1,nblocks_x
+       do iy = 1,nblocks_y
+         B(ix + (iy - 1)*nblocks_x)%G%mgx = mgx(ix)
+         B(ix + (iy - 1)*nblocks_x)%G%mgy = mgy(iy)
+         B(ix + (iy - 1)*nblocks_x)%G%iblock_x = ix
+         B(ix + (iy - 1)*nblocks_x)%G%iblock_y = iy
+        end do
+      end do
+
+
+  end subroutine
 
 
 end module domain

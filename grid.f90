@@ -31,17 +31,15 @@ module grid
 
 contains
 
-
-  subroutine read_grid(iblock,B,refine,input,echo)
+  subroutine read_grid(iblock,B,input)
 
     use io, only : seek_to_string,error,write_matlab,message
     use mpi_routines, only : is_master
 
     implicit none
 
-    integer,intent(in) :: iblock,input,echo
+    integer,intent(in) :: iblock,input
     type(block_grid),intent(out) :: B ! block-specific
-    real,intent(in) :: refine
 
     character(256) :: bndLfile,bndRfile,bndBfile,bndTfile
     character(256) :: str
@@ -86,21 +84,6 @@ contains
     read(input,nml=grid_list,iostat=stat)
     if (stat>0) call error('Error in grid_list','read_grid')
 
-    write(str,'(i13)') iblock
-    if (iblock_x==0) then
-       iblock_x = 1
-       if (is_master) call message('Block ' // trim(adjustl(str)) // &
-            ': Assuming that iblock_x = 1')
-    end if
-    if (iblock_y==0) then
-       if (is_master) call message('Block ' // trim(adjustl(str)) // &
-            ': Assuming that iblock_y = 1')
-       iblock_y = 1
-    end if
-
-    B%iblock_x = iblock_x
-    B%iblock_y = iblock_y
-
     B%bndLfile = bndLfile
     B%bndRfile = bndRfile
     B%bndBfile = bndBfile
@@ -111,6 +94,37 @@ contains
     B%bndBmap = bndBmap
     B%bndTmap = bndTmap
 
+    ! corners of block
+
+    B%LB = LB
+    B%LT = LT
+    B%RB = RB
+    B%RT = RT
+
+    ! total number of points in block (before refine)
+    B%nx = nx
+    B%ny = ny
+    
+  end subroutine read_grid
+
+  subroutine set_refine(i,B,refine)
+
+    implicit none
+
+    integer,intent(in) :: i
+    real,intent(in) :: refine
+    integer :: nx,ny,mgx,mgy,iblock_x,iblock_y
+    type(block_grid),intent(inout) :: B ! block-specific
+
+
+    nx = B%nx
+    ny = B%ny
+    mgx = B%mgx
+    mgy = B%mgy
+    iblock_x = B%iblock_x
+    iblock_y = B%iblock_y
+    
+    
     ! refine number of cells and indices of first point in block
     ! (ncells = npoints-1 for node-centered FD method)
 
@@ -118,7 +132,7 @@ contains
     if (ny/=1) ny = ceiling(dble(ny-1)*refine)+1
     mgx = ceiling(dble(mgx-B%iblock_x)*refine)+B%iblock_x
     mgy = ceiling(dble(mgy-B%iblock_y)*refine)+B%iblock_y
-
+    
     ! global (not process specific) block indices
 
     ! total number of points in block
@@ -131,12 +145,24 @@ contains
     B%pgx = mgx+nx-1
     B%pgy = mgy+ny-1
 
-    ! corners of block
+  end subroutine
 
-    B%LB = LB
-    B%LT = LT
-    B%RB = RB
-    B%RT = RT
+  subroutine write_grid(iblock,B,echo)
+    
+    use io, only : error,write_matlab
+    use mpi_routines, only : is_master
+
+    implicit none
+
+    integer,intent(in) :: iblock,echo
+    type(block_grid),intent(out) :: B ! block-specific
+
+    character(256) :: bndLfile,bndRfile,bndBfile,bndTfile
+    character(256) :: str
+    character(256) :: Bstr
+    integer :: stat,iblock_x,iblock_y,nx,ny,mgx,mgy
+    real :: bndLmap,bndRmap,bndBmap,bndTmap
+    type(point) :: LB,LT,RB,RT
     
     ! write block information
 
@@ -156,8 +182,8 @@ contains
        call write_matlab(echo,'py',B%pgy,Bstr)
     end if
 
-  end subroutine read_grid
-  
+  end subroutine
+
 
   subroutine init_grid(iblock,B,G,C,FDmethod,exact_metric)
 
