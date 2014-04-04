@@ -123,7 +123,7 @@ contains
     D%nblocks_x = nblocks_x
     D%nblocks_y = nblocks_y
     D%nblocks = nblocks
-    D%nifaces = nifaces
+    D%nifaces = (nblocks_x - 1)*nblocks_y + (nblocks_y - 1)*nblocks_x
     D%exact_metric = exact_metric
 
     D%operator_split = operator_split
@@ -132,13 +132,6 @@ contains
 
     D%t = t
 
-    ! refine number of cells (ncells = npoints-nblocks)
-
-    if (nx/=1) nx = ceiling(dble(nx-D%nblocks_x)*refine)+D%nblocks_x
-    if (ny/=1) ny = ceiling(dble(ny-D%nblocks_y)*refine)+D%nblocks_y
-
-    D%C%nx = nx
-    D%C%ny = ny
 
     ! allocate memory for each block and interface
 
@@ -186,6 +179,9 @@ contains
     do i = 1,D%nblocks
        call set_refine(i,D%B(i)%G,refine)
     end do
+   
+    ! Set the refined number of grid points nx and ny for the domain 
+    call set_grid(D)
     
     do i = 1,D%nblocks
        call block_limits(D%B(i)%G,blkxm(i),blkym(i))
@@ -1332,13 +1328,11 @@ contains
 
       integer :: ix,iy
       
-      integer :: mgx(1:nblocks_x),pgx(1:nblocks_x), & 
-                 mgy(1:nblocks_y),pgy(1:nblocks_y)
+      integer :: mgx(1:nblocks_x), &
+                 mgy(1:nblocks_y)
 
       mgx(1) = 1
-      pgx(1) = B(1)%G%nx
       mgy(1) = 1
-      pgy(1) = B(1)%G%ny
 
       ! mgx
       do ix = 2,nblocks_x
@@ -1363,5 +1357,31 @@ contains
 
   end subroutine
 
+  ! Set global nx and ny taking refinement into consideration
+  subroutine set_grid(D)
+
+    implicit none
+
+    type(domain_type),intent(inout) :: D
+
+    integer :: ix,iy,nx,ny
+
+    nx = 0
+    ny = 0
+
+    ! Load refined nx for each block
+    do ix=1,D%nblocks_x
+      nx = nx + D%B(ix)%G%nx
+    end do
+    
+    ! Load refined ny for each block
+    do iy=1,D%nblocks_y
+      ny = ny + D%B(1 + (iy - 1)*D%nblocks_x)%G%ny
+    end do
+
+    D%C%nx = nx
+    D%C%ny = ny
+
+  end subroutine
 
 end module domain
