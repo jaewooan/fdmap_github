@@ -23,32 +23,60 @@ module interfaces
 contains
 
 
-  subroutine init_iface(iface,I,input)
+  subroutine init_iface(iface,I,im,ip,Gm,Gp,dir,input,refine)
 
     use io, only : error,seek_to_string
+    use grid, only : block_grid
 
     implicit none
 
-    integer,intent(in) :: iface,input
+    integer,intent(in) :: iface,input,im,ip
+    real,intent(in) :: refine
     type(iface_type),intent(out) :: I
-
-    integer :: stat,iblockm,iblockp,mg,pg
+    type(block_grid),intent(in) :: Gm,Gp
+    character(1),intent(in) :: dir
+    logical :: read_params,no_refine
+    integer :: stat,iblockm,iblockp,iblock,mg,pg
     character(24) :: coupling
     character(1) :: direction
-    character(256) :: str
+    character(256) :: str,temp
     
     namelist /interface_list/ coupling,iblockm,iblockp,direction,mg,pg
     
     ! defaults
 
     coupling = 'locked'
+    iblockm = im
+    iblockp = ip
+    direction = dir
+    mg = 0
+    pg = 0
+    no_refine = .false.
 
-    ! read in interface parameters
+
+    ! read in interface parameters if the interface
+    ! is explicitly stated in the input file
         
     write(str,'(a,i0,a)') '!---IFACE',iface,'---'
-    call seek_to_string(input,str)
-    read(input,nml=interface_list,iostat=stat)
-    if (stat>0) call error('Error in interface_list','init_iface')
+    call seek_to_string_no_error(input,str,read_params)
+    if(read_params) then
+      read(input,nml=interface_list,iostat=stat)
+      if (stat>0) call error('Error in interface_list','init_iface')
+    end if
+    
+    ! Automatically determine mg and pg accounting for grid refinement
+    if(mg == 0 .or. pg == 0) then
+      select case(dir)
+        case('x')
+          mg = Gm%mgy
+          pg = Gm%pgy
+        case('y')
+          mg = Gm%mgx
+          pg = Gm%pgx
+      end select
+      no_refine = .true.
+    end if
+
 
     I%coupling = coupling
     I%iblockm = iblockm
@@ -57,7 +85,52 @@ contains
     I%mg = mg
     I%pg = pg
 
+    if(no_refine) return
+
+    ! adjust indices for refinement
+
+    select case(I%direction)
+    case default
+       call error('Invalid direction','init_iface_blocks')
+    case('x')
+       iblock = Gm%iblock_y
+    case('y')
+       iblock = Gm%iblock_x
+    end select
+
+    ! Refine mg and pg that has been manually inputted
+    if (mg==pg) then
+       I%mg = ceiling(dble(mg-iblock)*refine)+iblock
+       I%pg = I%mg
+    else
+       I%mg = ceiling(dble(mg-iblock)*refine)+iblock
+       I%pg = ceiling(dble(pg-iblock)*refine)+iblock
+    end if
+
   end subroutine init_iface
+  
+  subroutine seek_to_string_no_error(unit,str,stat)
+
+    implicit none
+
+    integer,intent(in) :: unit
+    character(*),intent(in) :: str
+    logical,intent(out) :: stat
+
+    character(256) :: temp
+
+    stat = .true.
+
+    rewind(unit)
+
+    do
+       read(unit,*,end=100) temp
+       if (temp==str) return
+    end do
+
+100 stat = .false.
+
+  end subroutine seek_to_string_no_error
 
 
   subroutine init_iface_blocks(iface,I,Gm,Gp,C,refine)
@@ -78,29 +151,7 @@ contains
     character(74) :: str
     integer :: mg,pg,m,p,iblock
 
-    ! global indices prior to refinement
 
-    mg = I%mg
-    pg = I%pg
-
-    ! adjust indices for refinement
-
-    select case(I%direction)
-    case default
-       call error('Invalid direction','init_iface_blocks')
-    case('x')
-       iblock = Gm%iblock_y
-    case('y')
-       iblock = Gm%iblock_x
-    end select
-
-    if (mg==pg) then
-       I%mg = ceiling(dble(mg-iblock)*refine)+iblock
-       I%pg = I%mg
-    else
-       I%mg = ceiling(dble(mg-iblock)*refine)+iblock
-       I%pg = ceiling(dble(pg-iblock)*refine)+iblock
-    end if
 
     if (is_master) then
        write(str,'(a,i0,2a,2(a,i2),2(a,i6))') 'iface',iface, &

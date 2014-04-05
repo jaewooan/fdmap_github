@@ -60,7 +60,8 @@ contains
 
     integer :: i,im,ip,mode,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,nF,nprocs_x,nprocs_y,stat
-    integer,dimension(:),allocatable :: blkxm,blkym
+    integer,dimension(:),allocatable :: blkxm,blkym,I_m,I_p
+    character(1),dimension(:),allocatable :: dir
     real :: Cdiss
     real,allocatable :: dtRK(:)
     character(10) :: FDmethod
@@ -114,8 +115,11 @@ contains
        if (is_master) call message('Assuming that nblocks_y = 1')
     end if
     if (nblocks==0) then
-       nblocks = 1
-       if (is_master) call message('Assuming that nblocks = 1')
+       if (is_master) call message('Assuming that nblocks = nblocks_x*nblocks_y')
+       nblocks = nblocks_x*nblocks_y
+       if(nblocks == 0) then
+           nblocks = 1
+       end if
     end if
 
     D%mode = mode
@@ -241,13 +245,22 @@ contains
 
     ! initialize interfaces (grid and processor information)
 
+    allocate(I_m(D%nifaces),I_p(D%nifaces),dir(D%nifaces))
+
+    call get_iface_neighbors(D,I_m,I_p,dir)
+
     do i = 1,D%nifaces
-       call init_iface(i,D%I(i),input)
+       call init_iface(i,D%I(i),I_m(i),I_p(i), &
+                       D%B(I_m(i))%G,D%B(I_p(i))%G, &
+                       dir(i),input,refine) 
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
        call init_iface_blocks(i,D%I(i),D%B(im)%G,D%B(ip)%G,D%C,refine)
        !call exchange_grid_edges(D%I(i),D%C,D%B(im)%G,D%B(ip)%G)
     end do
+    
+    deallocate(I_m,I_p,dir)
+
 
     ! initialize blocks (material properties, initial fields, etc.)
 
@@ -1383,5 +1396,42 @@ contains
     D%C%ny = ny
 
   end subroutine
+
+  ! Get a list of interface neighbors for each interface
+  subroutine get_iface_neighbors(D,Im,Ip,dir)
+
+      implicit none
+      
+      type(domain_type),intent(in) :: D
+      integer,intent(out),dimension(*) :: Im, Ip
+      character(1),intent(out),dimension(*) :: dir
+
+      integer :: ix,iy,offset
+
+      ! Interfaces with normal in the x-direction
+
+      do ix = 1, (D%nblocks_x - 1)
+       do iy = 1, D%nblocks_y
+        Im(ix + (iy-1)*(D%nblocks_x - 1)) = ix   + D%nblocks_x*(iy - 1)
+        Ip(ix + (iy-1)*(D%nblocks_x - 1)) = ix+1 + D%nblocks_x*(iy - 1)
+        end do
+      end do
+
+      offset = (D%nblocks_x - 1)*D%nblocks_y
+      dir(1:offset) = 'x'
+
+
+      ! Interfaces with normal in the y-direction
+
+      do ix = 1, D%nblocks_x
+       do iy = 1, D%nblocks_y-1
+        Im(offset + ix + (iy-1)*D%nblocks_x) = ix   + D%nblocks_x*(iy - 1)
+        Ip(offset + ix + (iy-1)*D%nblocks_x) = ix   + D%nblocks_x*iy
+        end do
+      end do
+
+      dir(offset+1:D%nifaces) = 'y'
+
+ end subroutine
 
 end module domain
