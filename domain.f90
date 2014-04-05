@@ -64,6 +64,10 @@ contains
     character(1),dimension(:),allocatable :: dir
     real :: Cdiss
     real,allocatable :: dtRK(:)
+    ! todo: remove this hard coded value that places an upper bound on the
+    ! number of blocks that can be used with the nx_list and ny_list feature
+    ! the default bound is: 1000^2
+    integer,dimension(1000) :: nx_list,ny_list
     character(10) :: FDmethod
     character(6) :: mpi_method
     character(256) :: str1,str2,str3,str
@@ -72,7 +76,7 @@ contains
 
     namelist /domain_list/ mode,FDmethod,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,mpi_method,nprocs_x,nprocs_y,decomposition_info,operator_split, &
-         energy_balance,displacement,exact_metric,peak
+         energy_balance,displacement,exact_metric,peak,nx_list,ny_list
 
     namelist /operator_list/ Cdiss
 
@@ -85,6 +89,8 @@ contains
     nblocks = 0
     nifaces = 0
     exact_metric = .false.
+    nx_list = 0
+    ny_list = 0
 
     nx = 1
     ny = 1
@@ -177,8 +183,12 @@ contains
        call read_grid(i,D%B(i)%G,input)
     end do
     
+    ! Set nx and ny using nx_list and ny_list
+    call set_block_grids(D,nx_list,ny_list)
+    
     ! Set grid indices (mgx,mgy,iblock_x,iblock_y) for all blocks
     call set_grid_indices(D%B,nblocks_x,nblocks_y)
+
     
     do i = 1,D%nblocks
        call set_refine(i,D%B(i)%G,refine)
@@ -1397,6 +1407,42 @@ contains
 
   end subroutine
 
+  ! Set nx and ny for each grid if nx_list and ny_list are present in the
+  ! domain_list in the input file
+  subroutine set_block_grids(D,nx_list,ny_list)
+
+      use io, only : error
+      use mpi_routines, only: is_master
+      implicit none
+      
+      type(domain_type),intent(inout) :: D
+      integer,dimension(:) :: nx_list,ny_list
+
+      integer :: ix,iy,nx_count,ny_count
+
+      ! Check that nx_list and ny_list contain the correct number of elements
+      if(is_master) then
+          nx_count = sum(sign(1,abs(nx_list(1:D%nblocks_x)) ))
+          ny_count = sum(sign(1,abs(ny_list(1:D%nblocks_y)) ))
+          if(nx_count /= D%nblocks_x) call error('incorrect number of elements in nx_list', &
+                                                 'domain::set_block_grids')
+          if(ny_count /= D%nblocks_y) call error('incorrect number of elements in ny_list', &
+                                                 'domain::set_block_grids')
+      end if
+
+      ! set nx and ny for each block by getting values from nx_list and ny_list
+      do ix=1,D%nblocks_x
+        do iy=1,D%nblocks_y
+          D%B(ix + (iy - 1)*D%nblocks_x)%G%nx = nx_list(ix)
+          D%B(ix + (iy - 1)*D%nblocks_x)%G%ny = ny_list(iy)
+        end do
+      end do
+
+
+
+
+  end subroutine
+
   ! Get a list of interface neighbors for each interface
   subroutine get_iface_neighbors(D,Im,Ip,dir)
 
@@ -1433,5 +1479,6 @@ contains
       dir(offset+1:D%nifaces) = 'y'
 
  end subroutine
+
 
 end module domain
