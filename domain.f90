@@ -1420,10 +1420,14 @@ contains
 
       integer :: ix,iy,nx_count,ny_count
 
+      ! Do nothing if nx_list and ny_list is not used
+      if(nx_list(1) == 0) return
+      if(ny_list(1) == 0) return
+
       ! Check that nx_list and ny_list contain the correct number of elements
       if(is_master) then
-          nx_count = sum(sign(1,abs(nx_list(1:D%nblocks_x)) ))
-          ny_count = sum(sign(1,abs(ny_list(1:D%nblocks_y)) ))
+          nx_count = sum(min(1,nx_list(1:D%nblocks_x) ))
+          ny_count = sum(min(1,ny_list(1:D%nblocks_y) ))
           if(nx_count /= D%nblocks_x) call error('incorrect number of elements in nx_list', &
                                                  'domain::set_block_grids')
           if(ny_count /= D%nblocks_y) call error('incorrect number of elements in ny_list', &
