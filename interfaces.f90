@@ -291,12 +291,15 @@ contains
     real,intent(in) :: hmin,hmax,refine,dt(:)
 
     ! initialize various interface models
-
-    call init_friction( iface,I%FR,I%m,I%p,input,echo,I%skip, &
-         I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
-    call init_thermpres(iface,I%TP,I%m,I%p,input,echo,I%skip,refine,dt)
-    call init_hydrofrac(iface,I%HF,I%m,I%p,I%x,I%y,hmin,hmax,refine,input,echo,I%skip,I%direction,I%mg,I%pg, &
-         I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
+    select case(I%coupling)
+    case('friction')
+      call init_friction( iface,I%FR,I%m,I%p,input,echo,I%skip, &
+           I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
+      call init_thermpres(iface,I%TP,I%m,I%p,input,echo,I%skip,refine,dt)
+    case('hydrofrac')
+     call init_hydrofrac(iface,I%HF,I%m,I%p,I%x,I%y,hmin,hmax,refine,input,echo,I%skip,I%direction,I%mg,I%pg, &
+          I%process_m,I%process_p,I%comm_m,I%comm_p,I%array_w)
+    end select
 
   end subroutine init_iface_fields
 
