@@ -155,7 +155,7 @@ contains
     implicit none
 
     integer,intent(in) :: iblock,echo
-    type(block_grid),intent(out) :: B ! block-specific
+    type(block_grid),intent(in) :: B ! block-specific
 
     character(256) :: bndLfile,bndRfile,bndBfile,bndTfile
     character(256) :: str

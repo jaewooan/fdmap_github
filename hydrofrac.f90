@@ -1101,7 +1101,7 @@ contains
 
       ! Left boundary
       do i = 0,HF%fd2%nbst-1
-         HF%fd2%D2(1 + i,:) = HF%fd2%DL(:, i)
+         HF%fd2%D2(1 + i,1:HF%fd2%nbnd) = HF%fd2%DL(0:HF%fd2%nbnd-1, i)
       end do
     
       ! Right boundary

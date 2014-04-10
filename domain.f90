@@ -190,6 +190,7 @@ contains
     call set_grid_indices(D%B,nblocks_x,nblocks_y)
 
     
+
     do i = 1,D%nblocks
        call set_refine(i,D%B(i)%G,refine)
     end do
@@ -1351,8 +1352,10 @@ contains
 
       integer :: ix,iy
       
-      integer :: mgx(1:nblocks_x), &
-                 mgy(1:nblocks_y)
+      integer,dimension(:),allocatable :: mgx, mgy
+
+      allocate(mgx(nblocks_x))
+      allocate(mgy(nblocks_y))
 
       mgx(1) = 1
       mgy(1) = 1
@@ -1361,6 +1364,7 @@ contains
       do ix = 2,nblocks_x
        mgx(ix) = mgx(ix-1) + B(ix-1)%G%nx
       end do
+
       
       ! mgy
       do iy = 2,nblocks_y
@@ -1376,6 +1380,8 @@ contains
          B(ix + (iy - 1)*nblocks_x)%G%iblock_y = iy
         end do
       end do
+
+      deallocate(mgx,mgy)
 
 
   end subroutine
