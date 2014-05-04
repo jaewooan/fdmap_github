@@ -71,7 +71,7 @@ module hydrofrac
      rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
      bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi
      character(256) :: bcL,bcR
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydeta
+     real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai
      real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
      type(fd2_type) :: fd2
@@ -103,7 +103,7 @@ contains
 
     logical :: coupled,linearized_walls,source_term,operator_splitting, &
                inviscid,banded_storage,variable_grid_spacing
-    integer :: n,i,j
+    integer :: n
     real :: rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
             bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi
     character(256) :: geom_file,initial_conds_file,var_file
@@ -258,8 +258,8 @@ contains
          HF%Dv(HF%n,HF%L%m:HF%L%p), &
          HF%Hw(HF%n), &
          HF%hy(HF%L%mb:HF%L%pb), &
-         HF%SATyp(4),HF%SATym(4) &
-            )
+         HF%SATyp(4),HF%SATym(4), &
+         HF%dydetai(HF%n)  )
 
     HF%wm0 = 1d40
     HF%wp0 = 1d40
@@ -273,6 +273,7 @@ contains
     HF%Du  = 1d40
     HF%Dv  = 1d40
     HF%Dp  = 1d40
+    HF%dydetai = 1d40
 
     ! initial conditions on wall position, velocity, and pressure perturbation
     ! (spatially uniform values can be set from input file parameters)
@@ -309,18 +310,14 @@ contains
     ! Load grid points with variable grid spacing
     if (var_file /= '' ) then
 
-        
-        allocate(HF%dydeta(HF%n))
-
         ! both sides read file (so process may read file twice)
-        if (process_m) call read_hydrofrac_var_grid(HF,var_file,comm_m,array)
-        if (process_p) call read_hydrofrac_var_grid(HF,var_file,comm_p,array)
+        if (process_m) call read_hydrofrac_var_grid(HF,var_file,comm_m)
+        if (process_p) call read_hydrofrac_var_grid(HF,var_file,comm_p)
 
         HF%variable_grid_spacing = .true.
 
         if (is_master) then
-          call &
-          write_matlab(echo,'variable_grid_spacing',HF%variable_grid_spacing,HFstr)
+          call write_matlab(echo,'var_file',var_file,HFstr)
         end if
     end if
 
@@ -332,6 +329,11 @@ contains
         if (process_p) call read_hydrofrac_initial_conds(HF,initial_conds_file,comm_p,array)
      end if
 
+        if (is_master) then
+          call &
+          write_matlab(echo,'variable_grid_spacing',HF%variable_grid_spacing,HFstr)
+          call write_matlab(echo,'custom_hf_profile',HF%slope,HFstr)
+        end if
     ! current (=initial) wall positions
 
     HF%wm = HF%wm0
@@ -378,7 +380,7 @@ contains
 
      use io, only : file_distributed,open_file_distributed, &
           read_file_distributed,close_file_distributed
-     use mpi_routines, only : pw
+     use mpi_routines, only : pw, myid
 
      implicit none
 
@@ -386,7 +388,6 @@ contains
      character(*),intent(in) :: geom_file
      integer,intent(in) :: comm,array
 
-     integer :: j
      type(file_distributed) :: fh
 
      call open_file_distributed(fh,geom_file,'read',comm,array,pw)
@@ -396,30 +397,34 @@ contains
      call read_file_distributed(fh,HF%dwm0dx(HF%L%m:HF%L%p))
      call read_file_distributed(fh,HF%dwp0dx(HF%L%m:HF%L%p))
 
-
      call close_file_distributed(fh)
 
    end subroutine read_hydrofrac_geom
    
-   subroutine read_hydrofrac_var_grid(HF,var_file,comm,array)
+   subroutine read_hydrofrac_var_grid(HF,var_file,comm)
+
 
      use io, only : file_distributed,open_file_distributed, &
           read_file_distributed,close_file_distributed
-     use mpi_routines, only : pw
+     use mpi_routines, only : pw, myid
+     use mpi, only: MPI_MODE_RDONLY,MPI_INFO_NULL
 
      implicit none
 
      type(hf_type),intent(inout) :: HF
      character(*),intent(in) :: var_file
-     integer,intent(in) :: comm,array
+     integer,intent(in) :: comm
 
-     integer :: j
      type(file_distributed) :: fh
+     integer :: ierr
 
-     call open_file_distributed(fh,var_file,'read',comm,array,pw)
-     call read_file_distributed(fh,HF%dydeta(1:HF%n))
 
+     call MPI_File_open(comm,var_file,MPI_MODE_RDONLY, &
+              MPI_INFO_NULL,fh%fh,ierr)
+     call read_file_distributed(fh,HF%dydetai(1:HF%n))
      call close_file_distributed(fh)
+
+
 
    end subroutine read_hydrofrac_var_grid
   
@@ -476,7 +481,7 @@ contains
     if (allocated(HF%hy )) deallocate(HF%hy )
     if (allocated(HF%SATyp )) deallocate(HF%SATyp )
     if (allocated(HF%SATym )) deallocate(HF%SATym )
-    if (allocated(HF%dydeta )) deallocate(HF%dydeta)
+    if (allocated(HF%dydetai )) deallocate(HF%dydetai)
     if (allocated(HF%fd2%D2 )) deallocate(HF%fd2%D2)
     if (allocated(HF%fd2%DI )) deallocate(HF%fd2%DI)
     if (allocated(HF%fd2%DmI )) deallocate(HF%fd2%DmI)
@@ -592,7 +597,6 @@ contains
                        sntm(m:p),sntp(m:p),x(m:p),y(m:p),t
 
     integer :: i
-    real :: uhat,phat, Z
     real,dimension(:),allocatable :: dudx,dpdx,b
 
     if (.not.HF%use_HF) return
@@ -695,7 +699,6 @@ contains
       real,intent(in) :: t
 
       integer :: i
-      real :: uhat,phat
     
       ! add penalty terms to enforce BC with SAT method
 
@@ -795,7 +798,7 @@ contains
     
     if (HF%bndp) then ! check if process handles minus boundary
        i = HF%L%pg
-       phat = HF%bcRA*(sin(HF%bcRomega*(t - HF%bcRphi)) + 1) ! Oscillatory pressure input
+       phat = HF%bcRA*(sin(HF%bcRomega*(t - HF%bcRphi)) + 1d0) ! Oscillatory pressure input
        uhat = (HF%p(i)+HF%rho0*HF%c0*HF%u(i) - phat)/(HF%rho0*HF%c0)
        HF%Du(i) = HF%Du(i)-HF%SATp*(HF%u(i)-uhat)
        HF%Dp(i) = HF%Dp(i)-HF%SATp*(HF%p(i)-phat)
@@ -887,7 +890,7 @@ contains
                                               ! plus, minus sides
     real,intent(in) :: dt
 
-    integer :: i,j
+    integer :: i
     real :: Z,Zi
 
     if (.not.HF%operator_splitting) return ! return if fully explicit
@@ -953,6 +956,22 @@ contains
 
     if(HF%banded_storage) return
 
+    if(HF%variable_grid_spacing) then
+    do i = m,p
+       b = HF%v(:,i)
+       call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       A =  - dt*HF%fd2%D2/HF%hy(i)**2
+       ! Add identity matrix
+       do j=1,HF%n
+       A(j,j) = A(j,j) + 1
+       end do
+       call dgesv(HF%n,1,A,HF%n,ipiv,b,HF%n,info)
+       HF%v(:,i) = b
+    end do
+    end if
+    
+    if(.not. HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
        call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
@@ -965,6 +984,7 @@ contains
        call dgesv(HF%n,1,A,HF%n,ipiv,b,HF%n,info)
        HF%v(:,i) = b
     end do
+    end if
 
   end subroutine
 
@@ -993,18 +1013,35 @@ contains
     
     allocate(A(2*kl + ku +1,n))
     
-    do i = m,p
-       b = HF%v(:,i)
-       call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
-       call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
-       A =  - dt*HF%fd2%bD2/HF%hy(i)**2
-       ! Add identity matrix to banded matrix
-       do j=1,n
-       A(kl+ku+1,j) = A(kl+ku+1,j) + 1
+    if(HF%variable_grid_spacing) then
+       do i = m,p
+          b = HF%v(:,i)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*HF%dydetai(n)**2*vtp(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_m(b,-dt*HF%SATym(3)*HF%dydetai(1)**2*vtm(i)/HF%hy(i)**2,HF%fd2)
+          A =  - dt*HF%fd2%bD2/HF%hy(i)**2
+          ! Add identity matrix to banded matrix
+          do j=1,n
+          A(kl+ku+1,j) = A(kl+ku+1,j) + 1
+          end do
+          call dgbsv(n,kl,ku,1,A,2*kl+ku+1,ipiv,b,ldb,info)
+          HF%v(:,i) = b
        end do
-       call dgbsv(n,kl,ku,1,A,2*kl+ku+1,ipiv,b,ldb,info)
-       HF%v(:,i) = b
-    end do
+    end if
+    
+    if(.not. HF%variable_grid_spacing) then
+       do i = m,p
+          b = HF%v(:,i)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+          A =  - dt*HF%fd2%bD2/HF%hy(i)**2
+          ! Add identity matrix to banded matrix
+          do j=1,n
+          A(kl+ku+1,j) = A(kl+ku+1,j) + 1
+          end do
+          call dgbsv(n,kl,ku,1,A,2*kl+ku+1,ipiv,b,ldb,info)
+          HF%v(:,i) = b
+       end do
+    end if
 
     deallocate(A)
 
@@ -1068,9 +1105,19 @@ contains
       type(hf_type), intent(inout) :: HF
       integer :: i
 
+      ! Width average with variable grid spacing
+      if(HF%variable_grid_spacing) then
+       do i = HF%L%m,HF%L%p
+          HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),1/HF%dydetai*HF%Hw)
+       end do
+      end if
+       
+      ! Width average with uniform grid spacing
+      if(.not. HF%variable_grid_spacing) then
        do i = HF%L%m,HF%L%p
           HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
        end do
+      end if
        HF%u = HF%u/(HF%n - 1)
 
   end subroutine
@@ -1374,7 +1421,6 @@ contains
       integer,intent(in) :: n
 
       integer :: i
-      real :: DT_BL, DT_BR
 
 
       allocate(HF%fd2%D2(n,n))
@@ -1437,20 +1483,15 @@ contains
       allocate(HF%fd2%D2(n,n),DS(n,n))
       HF%fd2%D2 = 0d0             
 
-      print *,"RUNNING FD2VAR IN DEBUG MODE"
-      ! TODO: REMOVE THIS! IT IS USED FOR TESTING VARIABLE COEFFICIENTS 
-      ! FOR THE CONSTANT COEFFICIENT CASE
-      HF%dydeta = 1
-      
       ! The D2 matrix with variable coefficients is
       ! D2 = HI*(-M + DS)
       
       select case(HF%fd2%FDmethod)
       case('SBP4')
-      call init_fd2var4_R(HF%fd2%D2,HF%dydeta,n)
+      call init_fd2var4_R(HF%fd2%D2,HF%dydetai,n)
       print *,"FD2VAR: SBP4"
       case('SBP6')
-      call init_fd2var6_R(HF%fd2%D2,HF%dydeta,n)
+      call init_fd2var6_R(HF%fd2%D2,HF%dydetai,n)
       print *,"FD2VAR: SBP6"
       case('SBP2')
           call error('SBP2 not yet implemented!','init_fd2var_full') 
@@ -1471,15 +1512,21 @@ contains
       if(debug) call write_matrix(HF%fd2%D2,'debug/Mi.txt')
 
       ! Computes: HI*DS
-      DS = 0
-      DS(1,1:HF%fd2%nD1) = -HF%fd2%D1L(1:HF%fd2%nD1)*HF%dydeta(1)*HF%fd2%HLi(1)
+      DS = 0d0
+      DS(1,1:HF%fd2%nD1) = -HF%fd2%D1L(1:HF%fd2%nD1)*HF%dydetai(1)*HF%fd2%HLi(1)
       DS(n,n-HF%fd2%nD1+1:n) = &
-      HF%fd2%D1R(1:HF%fd2%nD1)*HF%dydeta(n)*HF%fd2%HLi(1)
+      HF%fd2%D1R(1:HF%fd2%nD1)*HF%dydetai(n)*HF%fd2%HLi(1)
       if(debug) call write_matrix(DS,'debug/DS.txt')
 
       HF%fd2%D2 = HF%fd2%D2 + DS
 
       if(debug) call write_matrix(HF%fd2%D2,'debug/D2.txt')
+
+
+      ! Multiply by dydetai
+       do i=1,HF%n
+         HF%fd2%D2(i,:) = HF%fd2%D2(i,:)*HF%dydetai(i)
+       end do
 
       ! SAT penalty matrices
       ! D2*v + BLm*(v - g) + BLD*(Dv - g) + D^TBL*(v - g) + D^TBLD*(v - g) 
@@ -1487,8 +1534,8 @@ contains
       ! Starting by implementing velocities in the fluid only 
       !gm = *( HF%v(1,i)  - vtp(i) )/HF%hy(i)
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
-      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydeta(1)*HF%SATym(3),HF%fd2)
-      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydeta(n)*HF%SATyp(3),HF%fd2)
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydetai(1)**2*HF%SATym(3),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydetai(n)**2*HF%SATyp(3),HF%fd2)
 
       ! Pack the matrix into a banded matrix if requested
       if(HF%banded_storage) then
@@ -1520,7 +1567,7 @@ subroutine banded_matrix(A,ku,kl,B)
     
     allocate(B(2*kl + ku + 1,n))
     allocate(d(n))
-    B = 0
+    B = 0d0
 
     
     do i=1,nbnd
@@ -1552,7 +1599,7 @@ subroutine banded_matrix(A,ku,kl,B)
    ny = size(A,1)
    nx = size(A,2)
    
-   d = 0
+   d = 0d0
    do k=0,ny-1
        if(j+k <= nx .and. i+k <= ny) then
          d(k+j) = a(i+k,j+k)
