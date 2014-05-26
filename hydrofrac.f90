@@ -59,17 +59,24 @@ module hydrofrac
   ! TSOURCE = source duration
   ! ASOURCE = source amplitude
   ! WSOURCE = source width (in space)
-  ! bcL/bcR = boundary conditions on left and right boundary
+  ! bcL/bcR = boundary conditions on left and right boundary (sin_p for
+  ! oscillatory pressure input) (zero_u for no velocity (default))
+  ! bcLA = Amplitude
+  ! bcLomega = Angular frequency
+  ! bcLphi = phase
+  ! bcLtend = shut off time. When t > tend the oscillatory pressure input is
+  ! disabled and the zero_u b.c. is used instead. 
   ! fd2_type  = finite difference second derivative operator
+  ! USE_MMS = enable MMS if true
 
   type :: hf_type
      logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid,slope
-     logical :: banded_storage,variable_grid_spacing
+     logical :: banded_storage,variable_grid_spacing,use_mms
      integer :: n
      character(1) :: direction
      real :: &
      rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
-     bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi
+     bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
      character(256) :: bcL,bcR
      real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai
      real,dimension(:,:),allocatable :: v,Dv
@@ -102,17 +109,19 @@ contains
     character(256) :: str,bcL,bcR
 
     logical :: coupled,linearized_walls,source_term,operator_splitting, &
-               inviscid,banded_storage,variable_grid_spacing
+               inviscid,banded_storage,variable_grid_spacing,use_mms
     integer :: n
     real :: rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
-            bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi
+            bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
     character(256) :: geom_file,initial_conds_file,var_file
     character(4) :: FDmethod
     integer,parameter :: nb=3 ! number of additional boundary (ghost) points needed for FD operators
 
     namelist /hydrofrac_list/ rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
          n,coupled,linearized_walls,source_term,operator_splitting,geom_file,initial_conds_file, &
-         inviscid,FDmethod,bcL,bcR,bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,banded_storage,var_file
+         inviscid,FDmethod,bcL,bcR,bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend,&
+         banded_storage,var_file, &
+         use_mms
 
     ! defaults
        
@@ -137,14 +146,17 @@ contains
     var_file = ''
     FDmethod = 'SBP6'
     bcL = 'zero_u'
+    bcLtend = -1d0
     bcLA = 1d0
     bcLomega = 1d0
     bcLphi = 0d0
     bcR = 'zero_u'
+    bcRtend = -1d0
     bcRA = 1d0
     bcRomega = 1d0
     bcRphi = 0d0
     banded_storage = .true.
+    use_mms = .false.
 
     ! read in hydraulic fracture parameters
 
@@ -192,13 +204,18 @@ contains
 
     ! Boundary conditions 
     HF%bcL = bcL
+    HF%bcLtend = bcLtend
     HF%bcLA = bcLA
     HF%bcLomega = bcLomega
     HF%bcR = bcR
     HF%bcRA = bcRA
     HF%bcRomega = bcRomega
+    HF%bcRtend = bcRtend
 
     HF%banded_storage = banded_storage
+
+    ! MMS
+    HF%use_mms = use_mms
 
 
 
@@ -341,6 +358,9 @@ contains
 
     ! Compute Width-averaging norm operator
     call Hnorm(HF%Hw)
+
+    ! Initialize solution using MMS
+    if(HF%use_mms) call mms_init(HF,m,p,x,y,0d0)
 
     if(HF%inviscid) return
 
@@ -583,7 +603,7 @@ contains
   end subroutine update_fields_hydrofrac
 
 
-  subroutine set_rates_hydrofrac(HF,C,m,p,phip,vnm,vnp,vtm,vtp,sntm,sntp,x,y,t)
+  subroutine set_rates_hydrofrac(HF,C,m,p,phip,Zsm,Zsp,vnm,vnp,vtm,vtp,sntm,sntp,x,y,t)
 
     use mpi_routines2d, only : cartesian
     use fd, only : diff
@@ -593,6 +613,7 @@ contains
     type(hf_type),intent(inout) :: HF
     type(cartesian),intent(in) :: C
     integer,intent(in) :: m,p
+    real,intent(in) :: Zsm(m:p),Zsp(m:p)
     real,intent(in) :: phip(m:p),vnm(m:p),vnp(m:p),vtm(m:p),vtp(m:p), &
                        sntm(m:p),sntp(m:p),x(m:p),y(m:p),t
 
@@ -645,7 +666,7 @@ contains
     end if
 
 
-    call set_rates_viscous(HF,m,p,vtm,vtp,sntm,sntp)
+    call set_rates_viscous(HF,m,p,Zsm,Zsp,vtm,vtp,sntm,sntp)
 
     
     if (.not. HF%coupled) return
@@ -710,6 +731,8 @@ contains
             call bcL_sin_p(HF,t)
         case('sin_u')
             call bcL_sin_u(HF,t)
+        case('mms-hydrofrac-w')
+            call bcL_mms(HF,t)
         case default
             call error("Invalid boundary condition at left boundary", &
                 "hydrofrac::set_bc")
@@ -723,6 +746,8 @@ contains
             call bcR_sin_p(HF,t)
         case('sin_u')
             call bcR_sin_u(HF,t)
+        case('mms-hydrofrac-w')
+            call bcR_mms(HF,t)
         case default
             call error("Invalid boundary condition at right boundary", &
                 "hydrofrac::set_bc")
@@ -744,7 +769,7 @@ contains
        uhat = hf%bcLA*sin(hf%bcLomega*(t - hf%bcLphi)) ! oscillatory velocity input
        phat = (hf%rho0*hf%c0*uhat + (hf%p(i) - hf%rho0*hf%c0*hf%u(i)) )
 
-       HF%Dv(:,i) = HF%Dv(:,i)-HF%SATm*(HF%v(:,i)-uhat)
+       HF%Dv(:,i) = HF%Dv(:,i)-HF%SATm*(HF%u(i)-uhat)
        HF%Dp(i) = HF%Dp(i)-HF%SATm*(HF%p(i)-phat)
     end if
 
@@ -777,12 +802,19 @@ contains
     integer :: i
     real :: uhat,phat
 
+
     if (HF%bndm) then ! check if process handles minus boundary
        i = HF%L%mg
        phat = hf%bcLA*sin(hf%bcLomega*(t - hf%bcLphi))! oscillatory pressure input
+       if(HF%bcLtend < t .and. HF%bcLtend > 0) then
+           !call bcL_zero_u(HF)
+           !return
+           phat = 0d0
+       end if
        uhat = (phat - (hf%p(i) - hf%rho0*hf%c0*hf%u(i)) )/(hf%rho0*hf%c0)
 
-       HF%Dv(:,i) = HF%Dv(:,i)-HF%SATm*(HF%v(:,i)-uhat)
+       HF%Dv(:,i) = HF%Dv(:,i)-HF%SATm*(HF%u(i)-uhat)
+       !HF%Dv(:,i) = HF%Dv(:,i)-HF%SATm*(HF%v(:,i)-uhat)
        HF%Dp(i) = HF%Dp(i)-HF%SATm*(HF%p(i)-phat)
     end if
 
@@ -796,9 +828,14 @@ contains
     integer :: i
     real :: uhat,phat
     
+    if(HF%bcRtend < t .and. HF%bcRtend > 0) then
+        call bcR_zero_u(HF)
+        return
+    end if
+    
     if (HF%bndp) then ! check if process handles minus boundary
        i = HF%L%pg
-       phat = HF%bcRA*(sin(HF%bcRomega*(t - HF%bcRphi)) + 1d0) ! Oscillatory pressure input
+       phat = HF%bcRA*(sin(HF%bcRomega*(t - HF%bcRphi))) ! Oscillatory pressure input
        uhat = (HF%p(i)+HF%rho0*HF%c0*HF%u(i) - phat)/(HF%rho0*HF%c0)
        HF%Du(i) = HF%Du(i)-HF%SATp*(HF%u(i)-uhat)
        HF%Dp(i) = HF%Dp(i)-HF%SATp*(HF%p(i)-phat)
@@ -812,13 +849,13 @@ contains
     type(hf_type),intent(inout) :: HF
     integer :: i
     real :: uhat,phat
-    
     if (HF%bndm) then ! check if process handles minus boundary
        i = HF%L%mg
        uhat = 0d0 ! zero fluid velocity at crack tip
-       phat = HF%p(i)-HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
-       HF%Du(i) = HF%Du(i)-HF%SATm*(HF%u(i)-uhat)
-       HF%Dp(i) = HF%Dp(i)-HF%SATm*(HF%p(i)-phat)
+       phat = HF%p(i) - HF%rho0*HF%c0*HF%u(i)
+
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATm*(HF%u(i)-uhat)
+       HF%Dp(i)   = HF%Dp(i)  - HF%SATm*(HF%p(i)-phat)
     end if
 
   end subroutine
@@ -832,20 +869,71 @@ contains
     if (HF%bndp) then ! check if process handles plus  boundary
        i = HF%L%pg
        uhat = 0d0 ! zero fluid velocity at crack tip
-       phat = HF%p(i)+HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
-       HF%Du(i) = HF%Du(i)-HF%SATp*(HF%u(i)-uhat)
-       HF%Dp(i) = HF%Dp(i)-HF%SATp*(HF%p(i)-phat)
+       phat = HF%p(i) + HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
+
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATp*(HF%u(i)-uhat)
+       HF%Dp(i)   = HF%Dp(i)  - HF%SATp*(HF%p(i)-phat)
+    end if
+
+  end subroutine
+  
+  subroutine bcL_mms(HF,t)
+      
+    type(hf_type),intent(inout) :: HF
+    real,intent(in) :: t
+    integer :: i
+    real :: uhat,phat
+    if (HF%bndm) then ! check if process handles minus boundary
+       i = HF%L%mg
+       uhat = 0d0 ! zero fluid velocity at crack tip
+       phat = HF%p(i) - HF%rho0*HF%c0*HF%u(i)
+
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATm*(HF%v(:,i)-uhat)
+       HF%Dp(i)   = HF%Dp(i)  - HF%SATm*(HF%p(i)-phat)
     end if
 
   end subroutine
 
-  subroutine fluid_stresses(HF,i,p,taum,taup,vtm,vtp)
+  subroutine bcR_mms(HF,t)
+    
+    type(hf_type),intent(inout) :: HF
+    real,intent(in) :: t
+    integer :: i
+    real :: uhat,phat
+
+    if (HF%bndp) then ! check if process handles plus  boundary
+       i = HF%L%pg
+       uhat = 0d0 ! zero fluid velocity at crack tip
+       phat = HF%p(i) + HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
+
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATp*(HF%v(:,i)-uhat)
+       HF%Dp(i)   = HF%Dp(i)  - HF%SATp*(HF%p(i)-phat)
+    end if
+
+  end subroutine
+
+  subroutine mms_init(HF,m,p,x,y,t)
+      use mms, only: mms_hydrofrac
+
+      type(HF_type),intent(inout) :: HF
+      integer,intent(in) :: m,p
+      real,dimension(m:p),intent(in) :: x,y
+      real,intent(in) :: t
+
+
+
+
+  end subroutine
+
+  subroutine fluid_stresses(HF,i,p,wsm,wsp,Zsm,Zsp,taum,taup,vtm,vtp)
 
     implicit none
 
     type(HF_type),intent(in) :: HF
     integer,intent(in) :: i
+    real,intent(in) :: wsm,wsp,Zsm,Zsp
     real,intent(out) :: p,taum,taup,vtm,vtp
+    real :: Z,Zi,Wm,Wp,wfm,wfp
 
     ! fluid pressure
 
@@ -876,6 +964,29 @@ contains
     taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
     taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
 
+    ! Hat variables
+    Z  = HF%rho0*HF%c0
+    Zi = 1/Z
+    
+    ! Specify characteristic variable going into the fluid
+    ! Wm: incoming fluid characteristic on minus side
+    ! Wp: incoming fluid characteristic on plus side
+    ! wfm: outgoing fluid characteristic on minus side
+    ! wfp: outgoing fluid characteristic on plus side
+    ! wsm: outgoing characteristic from solid on minus side
+    ! wsp: outgoing characteristic from solid on plus side
+    
+    Wm = 2*Z/(Z + Zsm)*wsm
+    Wp = 2*Z/(Z + Zsp)*wsp
+
+    wfm = taum + Z*vtm
+    wfp = taup - Z*vtp
+
+    vtm = 0.5*Zi*(Wm - wfm)
+    vtp = 0.5*Zi*(Wp - wfp)
+    
+    taum = 0.5*(Wm + wfm)
+    taup = 0.5*(Wp + wfp)
 
   end subroutine fluid_stresses
 
@@ -1122,13 +1233,13 @@ contains
 
   end subroutine
   
-  subroutine set_rates_viscous(HF,m,p,vtm,vtp,sntm,sntp)
+  subroutine set_rates_viscous(HF,m,p,Zsm,Zsp,vtm,vtp,sntm,sntp)
 
       implicit none
 
       type(hf_type),intent(inout) :: HF
       integer,intent(in) :: m,p
-      real,intent(in) :: vtm(m:p),vtp(m:p),sntm(m:p),sntp(m:p)
+      real,intent(in) :: Zsm(m:p),Zsp(m:p),vtm(m:p),vtp(m:p),sntm(m:p),sntp(m:p)
 
       real,dimension(:),allocatable :: v_yy
       real :: gp,gm ! Boundary conditions of the form: gp = SAT_WEIGHT*b.c/h 
@@ -1148,6 +1259,8 @@ contains
          v_yy = v_yy/(HF%hy(i)**2)
          HF%Dv(:,i) = HF%Dv(:,i)+HF%mu/HF%rho0*v_yy
 
+
+
          ! SAT terms, minus boundary
          ! Penalty terms not used
          !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%fd2%H00i*HF%v(1,i)
@@ -1166,6 +1279,7 @@ contains
       deallocate(v_yy)
 
   end subroutine 
+
   
   ! Compute the second derivative of v and store the result in v_yy
   subroutine second_derivative(fd2,v,v_yy)

@@ -637,7 +637,10 @@ contains
        ! set rates for auxiliary fields (fluid velocity, pressure),
        ! passing in P-wave stress transfer phip, vnm, vnp
 
-       call set_rates_hydrofrac(I%HF,C,I%m,I%p,phip,vnm,vnp,vtm,vtp,sntm,sntp,I%x(I%m:I%p),I%y(I%m:I%p),t)
+       call set_rates_hydrofrac(I%HF,C,I%m,I%p, &
+           Fm%bndFT%M(I%m:I%p,1), &
+           Fp%bndFB%M(I%m:I%p,1), &
+           phip,vnm,vnp,vtm,vtp,sntm,sntp,I%x(I%m:I%p),I%y(I%m:I%p),t)
 
        deallocate(phip)
 
@@ -1012,7 +1015,7 @@ contains
     real :: Zsim,Zsip,Zpim,Zpip, &
             snnp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
             snnm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real :: etap,taum,taup,p
+    real :: etap,taum,taup,p,wm,wp
 
     ! naming convention:
     ! vtFDp = tangential component of velocity, FD = grid value, p = plus side
@@ -1046,9 +1049,14 @@ contains
     Zpip = 1d0/Zpp
     Zpim = 1d0/Zpm
 
+
+    ! Outgoing characteristic variables tangential to the interface
+    wm = sntFDm - Zsm*vtFDm 
+    wp = sntFDp + Zsp*vtFDp 
+
     ! shear and normal tractions exerted by the fluid on the solid walls
 
-    call fluid_stresses(HF,i,p,taum,taup,vtm,vtp)
+    call fluid_stresses(HF,i,p,wm,wp,Zsm,Zsp,taum,taup,vtm,vtp)
 
     ! balance normal tractions
 
