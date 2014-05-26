@@ -40,6 +40,8 @@ module hydrofrac
   ! K0 = bulk modulus
   ! C0 = sound speed
   ! mu = dynamic viscosity
+  ! c1 = momentum diffusion speed
+  ! Z  = viscous impedance
   ! N = number of points resolving width
   ! WM,WP = position of minus (lower) and upper walls (wp-wm=width)
   ! WM0,WP0 = initial values of wm,wp
@@ -75,7 +77,8 @@ module hydrofrac
      integer :: n
      character(1) :: direction
      real :: &
-     rho0,K0,mu,c0,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
+     rho0,K0,mu,c0,&
+     c1,Z1,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
      bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
      character(256) :: bcL,bcR
      real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai
@@ -216,6 +219,7 @@ contains
 
     ! MMS
     HF%use_mms = use_mms
+
 
 
 
@@ -368,12 +372,18 @@ contains
     HF%hy = (HF%wp0 - HF%wm0)/(HF%n - 1)
     
 
+    ! Momentum diffusion speed and impedance 
+    HF%c1 = HF%mu/(HF%rho0*maxval(HF%wp0 - HF%wm0))
+    HF%Z1 = HF%c1*HF%rho0
+
     ! Set SAT penalty weights for viscous terms
     ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
 
-    ! Impose velocities only
-    HF%SATym(:) =   HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /)
-    HF%SATyp(:) = - HF%mu/HF%rho0*(/  0d0, 0d0, 1d0, 0d0  /) 
+    HF%SATym(1) = - HF%c1
+    HF%SATym(4) = - HF%mu/HF%rho0
+    
+    HF%SATyp(1) = - HF%c1
+    HF%SATyp(4) = - HF%mu/HF%rho0
     
     ! Initialize second derivative SBP operator
     if( .not. inviscid) then
@@ -603,7 +613,7 @@ contains
   end subroutine update_fields_hydrofrac
 
 
-  subroutine set_rates_hydrofrac(HF,C,m,p,phip,Zsm,Zsp,vnm,vnp,vtm,vtp,sntm,sntp,x,y,t)
+  subroutine set_rates_hydrofrac(HF,C,m,p,phip,vnm,vnp,vtm,vtp,x,y,t)
 
     use mpi_routines2d, only : cartesian
     use fd, only : diff
@@ -613,9 +623,8 @@ contains
     type(hf_type),intent(inout) :: HF
     type(cartesian),intent(in) :: C
     integer,intent(in) :: m,p
-    real,intent(in) :: Zsm(m:p),Zsp(m:p)
     real,intent(in) :: phip(m:p),vnm(m:p),vnp(m:p),vtm(m:p),vtp(m:p), &
-                       sntm(m:p),sntp(m:p),x(m:p),y(m:p),t
+                       x(m:p),y(m:p),t
 
     integer :: i
     real,dimension(:),allocatable :: dudx,dpdx,b
@@ -666,7 +675,7 @@ contains
     end if
 
 
-    call set_rates_viscous(HF,m,p,Zsm,Zsp,vtm,vtp,sntm,sntp)
+    call set_rates_viscous(HF,m,p,vtm,vtp)
 
     
     if (.not. HF%coupled) return
@@ -925,15 +934,15 @@ contains
 
   end subroutine
 
-  subroutine fluid_stresses(HF,i,p,wsm,wsp,Zsm,Zsp,taum,taup,vtm,vtp)
+  subroutine fluid_stresses(HF,i,p,wsm,wsp,Zsm,Zsp,taum,taup)
 
     implicit none
 
     type(HF_type),intent(in) :: HF
     integer,intent(in) :: i
     real,intent(in) :: wsm,wsp,Zsm,Zsp
-    real,intent(out) :: p,taum,taup,vtm,vtp
-    real :: Z,Zi,Wm,Wp,wfm,wfp
+    real,intent(out) :: p,taum,taup
+    real :: Z,Wm,Wp,wfm,wfp,vtm,vtp
 
     ! fluid pressure
 
@@ -955,18 +964,13 @@ contains
     end if
 
     if(HF%inviscid) return
-    
-    ! Tangential velocities
-    vtm = HF%v(1,i)
-    vtp = HF%v(HF%n,i)
 
     ! Viscous case
     taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
     taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
 
+
     ! Hat variables
-    Z  = HF%rho0*HF%c0
-    Zi = 1/Z
     
     ! Specify characteristic variable going into the fluid
     ! Wm: incoming fluid characteristic on minus side
@@ -976,17 +980,23 @@ contains
     ! wsm: outgoing characteristic from solid on minus side
     ! wsp: outgoing characteristic from solid on plus side
     
-    Wm = 2*Z/(Z + Zsm)*wsm
-    Wp = 2*Z/(Z + Zsp)*wsp
-
-    wfm = taum + Z*vtm
-    wfp = taup - Z*vtp
-
-    vtm = 0.5*Zi*(Wm - wfm)
-    vtp = 0.5*Zi*(Wp - wfp)
+    ! Momentum diffusion impedance
+    Z  = HF%Z1
     
-    taum = 0.5*(Wm + wfm)
-    taup = 0.5*(Wp + wfp)
+    ! Tangential velocities
+    vtm = HF%v(1,i)
+    vtp = HF%v(HF%n,i)
+
+    wfm = taum - Z*vtm
+    wfp = taup + Z*vtp
+
+    Wm = 1/(Z + Zsm)*((Zsm - Z)*wfp + 2*Z*wsm)
+    Wp = 1/(Z + Zsp)*((Zsp - Z)*wfm + 2*Z*wsp)
+    
+    
+    taum = 0.5*(Wm + wfp)
+    taup = 0.5*(Wp + wfm)
+
 
   end subroutine fluid_stresses
 
@@ -1233,13 +1243,13 @@ contains
 
   end subroutine
   
-  subroutine set_rates_viscous(HF,m,p,Zsm,Zsp,vtm,vtp,sntm,sntp)
+  subroutine set_rates_viscous(HF,m,p,vtm,vtp)
 
       implicit none
 
       type(hf_type),intent(inout) :: HF
       integer,intent(in) :: m,p
-      real,intent(in) :: Zsm(m:p),Zsp(m:p),vtm(m:p),vtp(m:p),sntm(m:p),sntp(m:p)
+      real,intent(in) :: vtm(m:p),vtp(m:p)
 
       real,dimension(:),allocatable :: v_yy
       real :: gp,gm ! Boundary conditions of the form: gp = SAT_WEIGHT*b.c/h 
@@ -1259,20 +1269,17 @@ contains
          v_yy = v_yy/(HF%hy(i)**2)
          HF%Dv(:,i) = HF%Dv(:,i)+HF%mu/HF%rho0*v_yy
 
-
-
          ! SAT terms, minus boundary
-         ! Penalty terms not used
-         !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1,i)*HF%fd2%H00i*HF%v(1,i)
-         !HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2,i)*HF%fd2%H00i*(diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)) 
-         gm = HF%SATym(3)*( HF%v(1,i)  - vtp(i) )/HF%hy(i)**2
+         ! Penalize v using v-hat = u_dot-hat
+         ! Two penalties are applied:  
+         ! sigma1*(v - vhat) + sigma2*D^T*(v - vhat)
+         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1)*HF%fd2%H00i*(HF%v(1,i) -vtm(i))/HF%hy(i)
+         gm = HF%SATym(4)*(HF%v(1,i) - vtm(i))/HF%hy(i)**2
          call diff_T_bnd_m(HF%Dv(:,i),gm,HF%fd2)
 
          ! SAT terms, plus boundary
-         ! Penalty terms not used
-         !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1,i)*HF%fd2%H00i*HF%v(i,HF%n)
-         !HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2,i)*HF%fd2%H00i*(diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i))
-         gp = HF%SATyp(3)*( HF%v(HF%n,i) - vtm(i) )/HF%hy(i)**2
+         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1)*HF%fd2%H00i*(HF%v(HF%n,i) - vtp(i))/HF%hy(i) 
+         gp = HF%SATyp(4)*(HF%v(HF%n,i) - vtp(i))/HF%hy(i)**2
          call diff_T_bnd_p(HF%Dv(:,i),gp,HF%fd2)
       end do
 

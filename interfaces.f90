@@ -638,9 +638,7 @@ contains
        ! passing in P-wave stress transfer phip, vnm, vnp
 
        call set_rates_hydrofrac(I%HF,C,I%m,I%p, &
-           Fm%bndFT%M(I%m:I%p,1), &
-           Fp%bndFB%M(I%m:I%p,1), &
-           phip,vnm,vnp,vtm,vtp,sntm,sntp,I%x(I%m:I%p),I%y(I%m:I%p),t)
+           phip,vnm,vnp,vtm,vtp,I%x(I%m:I%p),I%y(I%m:I%p),t)
 
        deallocate(phip)
 
@@ -1050,13 +1048,14 @@ contains
     Zpim = 1d0/Zpm
 
 
-    ! Outgoing characteristic variables tangential to the interface
+    ! Characteristic variables for S-waves into the interface
+    ! on the minus and plus side
     wm = sntFDm - Zsm*vtFDm 
     wp = sntFDp + Zsp*vtFDp 
 
     ! shear and normal tractions exerted by the fluid on the solid walls
 
-    call fluid_stresses(HF,i,p,wm,wp,Zsm,Zsp,taum,taup,vtm,vtp)
+    call fluid_stresses(HF,i,p,wm,wp,Zsm,Zsp,taum,taup)
 
     ! balance normal tractions
 
@@ -1074,22 +1073,17 @@ contains
     
     ! balance shear tractions
 
-    ! may need to update this to be consistent with Ossian's derivation
     sntp = taup
     sntm = taum
 
     vtp = vtFDp+Zsip*(sntFDp-sntp)
     vtm = vtFDm-Zsim*(sntFDm-sntm)
 
+
     ! rotate back to x-y coordinates
 
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
-
-    ! Send grid values to fluid
-
-    vtp = vtFDp
-    vtm = vtFDm
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 
