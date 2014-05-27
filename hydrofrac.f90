@@ -1080,8 +1080,8 @@ contains
     if(HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
-       call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
-       call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
        A =  - dt*HF%fd2%D2/HF%hy(i)**2
        ! Add identity matrix
        do j=1,HF%n
@@ -1095,8 +1095,10 @@ contains
     if(.not. HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
-       call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
-       call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       b(1) = b(1)       - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+       b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
+       call diff_T_bnd_p(b,-dt*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_m(b,-dt*HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
        A =  - dt*HF%fd2%D2/HF%hy(i)**2
        ! Add identity matrix
        do j=1,HF%n
@@ -1152,8 +1154,10 @@ contains
     if(.not. HF%variable_grid_spacing) then
        do i = m,p
           b = HF%v(:,i)
-          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
-          call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+          b(1) = b(1)       - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+          b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
+          call diff_T_bnd_m(b,-dt*HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
           A =  - dt*HF%fd2%bD2/HF%hy(i)**2
           ! Add identity matrix to banded matrix
           do j=1,n
@@ -1566,12 +1570,12 @@ contains
 
       ! SAT penalty matrices
       ! D2*v + BLm*(v - g) + BLD*(Dv - g) + D^TBL*(v - g) + D^TBLD*(v - g) 
-
-      ! Starting by implementing velocities in the fluid only 
-      !gm = *( HF%v(1,i)  - vtp(i) )/HF%hy(i)
+      
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
-      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(3),HF%fd2)
-      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(3),HF%fd2)
+      HF%fd2%D2(1,1) = HF%SATym(1)*HF%fd2%H00i
+      HF%fd2%D2(HF%n,HF%n) = HF%SATyp(1)*HF%fd2%H00i
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(4),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(4),HF%fd2)
 
       ! Pack the matrix into a banded matrix if requested
       if(HF%banded_storage) then
