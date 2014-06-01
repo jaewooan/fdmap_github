@@ -14,7 +14,7 @@ module hydrofrac
   ! DI = interior derivative coefficients
   ! DL/DR = left/right boundary derivative coefficients
   ! D1L/D1R = first derivative boundary coefficients
-  ! D2 = full second derivative matrix including boundary treatment (used by implicit solve)
+  ! D2 = full second derivative matrix including boundary terms with scaling h^2 (used by implicit solve)
   ! bD2 = Same as D2 but stored in LAPACK's banded matrix format
   ! H1Li/H1Ri = inverted diagonal norm coefficients near boundaries (needed by penalty terms of the
   ! form D^T)
@@ -966,19 +966,25 @@ contains
     if(HF%inviscid) return
 
     ! Viscous case
-    taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
-    taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
+    if(HF%variable_grid_spacing) then
+        taum = taum + HF%mu*HF%dydetai(1)*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
+        taup = taup + HF%mu*HF%dydetai(HF%n)*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
+    end if
+
+    if(.not. HF%variable_grid_spacing) then
+        taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
+        taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
+    end if
 
 
     ! Hat variables
-    
     ! Specify characteristic variable going into the fluid
-    ! Wm: incoming fluid characteristic on minus side
-    ! Wp: incoming fluid characteristic on plus side
-    ! wfm: outgoing fluid characteristic on minus side
-    ! wfp: outgoing fluid characteristic on plus side
-    ! wsm: outgoing characteristic from solid on minus side
-    ! wsp: outgoing characteristic from solid on plus side
+    ! Wm:  fluid characteristic into the interface on minus side
+    ! Wp:   fluid characteristic into the interface on plus side
+    ! wfm:  fluid characteristic leaving the interface on minus side
+    ! wfp:   fluid characteristic leaving the interface on plus side
+    ! wsm: solid characteristic into the interface on minus side
+    ! wsp:  solid characteristic into the interface on plus side
     
     ! Momentum diffusion impedance
     Z  = HF%Z1
@@ -1073,13 +1079,17 @@ contains
     real,dimension(HF%n) :: b ! Right hand side vector containing boundary terms 
                               ! and solution at previous time step
     real,dimension(HF%n,HF%n) :: A ! matrix to LU decompose
-    integer :: i,j,info,ipiv(HF%n)
+    integer :: i,j,info,ipiv(HF%n),n
+
+    n = HF%n
 
     if(HF%banded_storage) return
 
     if(HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
+       b(1) = b(1)       - dt*HF%SATym(1)*HF%dydetai(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+       b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%dydetai(HF%n)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
        call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
        call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
        A =  - dt*HF%fd2%D2/HF%hy(i)**2
@@ -1095,11 +1105,13 @@ contains
     if(.not. HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
-       b(1) = b(1)       - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
-       b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
+       b(1) = b(1)  - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+       b(n) = b(n)  - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/HF%hy(i)
        call diff_T_bnd_p(b,-dt*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
        call diff_T_bnd_m(b,-dt*HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
-       A =  - dt*HF%fd2%D2/HF%hy(i)**2
+       A =  - dt*(HF%fd2%D2/HF%hy(i)**2)
+       !A(1,1) = A(1,1) -dt*HF%SATym(1)*HF%fd2%H00i/HF%hy(i)**2
+       !A(n,n) = A(n,n) -dt*HF%SATyp(1)*HF%fd2%H00i/HF%hy(i)**2
        ! Add identity matrix
        do j=1,HF%n
        A(j,j) = A(j,j) + 1
@@ -1139,8 +1151,10 @@ contains
     if(HF%variable_grid_spacing) then
        do i = m,p
           b = HF%v(:,i)
-          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*HF%dydetai(n)**2*vtp(i)/HF%hy(i)**2,HF%fd2)
-          call diff_T_bnd_m(b,-dt*HF%SATym(3)*HF%dydetai(1)**2*vtm(i)/HF%hy(i)**2,HF%fd2)
+          b(1) = b(1) - dt*HF%SATym(1)*HF%fd2%H00i*HF%dydetai(1)*vtm(i)/HF%hy(i)
+          b(n) = b(n) - dt*HF%SATyp(1)*HF%fd2%H00i*HF%dydetai(n)*vtp(i)/Hf%hy(i)
+          call diff_T_bnd_m(b,-dt*HF%SATym(4)*HF%dydetai(1)**2*vtm(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(4)*HF%dydetai(n)**2*vtp(i)/HF%hy(i)**2,HF%fd2)
           A =  - dt*HF%fd2%bD2/HF%hy(i)**2
           ! Add identity matrix to banded matrix
           do j=1,n
@@ -1571,9 +1585,13 @@ contains
       ! SAT penalty matrices
       ! D2*v + BLm*(v - g) + BLD*(Dv - g) + D^TBL*(v - g) + D^TBLD*(v - g) 
       
+      ! Note that one penalty term is not included in D2 since it does not scale
+      ! as 1/h^2
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
-      HF%fd2%D2(1,1) = HF%SATym(1)*HF%fd2%H00i
-      HF%fd2%D2(HF%n,HF%n) = HF%SATyp(1)*HF%fd2%H00i
+
+      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(1)*HF%fd2%H00i
+      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(1)*HF%fd2%H00i
+
       call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(4),HF%fd2)
       call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(4),HF%fd2)
 
@@ -1659,8 +1677,13 @@ contains
       ! Starting by implementing velocities in the fluid only 
       !gm = *( HF%v(1,i)  - vtp(i) )/HF%hy(i)
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
-      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydetai(1)**2*HF%SATym(3),HF%fd2)
-      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydetai(n)**2*HF%SATyp(3),HF%fd2)
+      ! Note that one penalty term is not included in D2 since it does not scale
+      ! as 1/h^2  (looks like it should scale like that, why?)
+      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(1)*HF%fd2%H00i*HF%dydetai(1)
+      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(1)*HF%fd2%H00i*HF%dydetai(n)
+
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydetai(1)**2*HF%SATym(4),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydetai(n)**2*HF%SATyp(4),HF%fd2)
 
       ! Pack the matrix into a banded matrix if requested
       if(HF%banded_storage) then

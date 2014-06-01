@@ -226,7 +226,7 @@ contains
   subroutine set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use mms, only : mms_sin,inplane_bessel,inplane_fault_mms
+    use mms, only : mms_sin,inplane_bessel,inplane_fault_mms,mms_hydrofrac
     use geometry, only : rotate_xy2nt
     use io, only : error
 
@@ -254,7 +254,7 @@ contains
     select case(bc)
     case default
        call rotate_fields_xy2nt(F-F0,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
-    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+    case('inplane-bessel-w','mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
        call rotate_fields_xy2nt(F  ,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
     end select
 
@@ -262,7 +262,7 @@ contains
 
     select case(bc)
        
-    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w') ! MMS
+    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','mms-hydrofrac-w') ! MMS
        
        select case(bc)
        case('inplane-bessel-w')
@@ -285,6 +285,13 @@ contains
           FEX(3) = mms_sin(x,y,t,iblock,'sxx')
           FEX(4) = mms_sin(x,y,t,iblock,'sxy')
           FEX(5) = mms_sin(x,y,t,iblock,'syy')
+          FEX(6) = 0d0
+       case('mms-hydrofrac-w')
+          FEX(1) = mms_hydrofrac(x,y,t,iblock,'vx')
+          FEX(2) = mms_hydrofrac(x,y,t,iblock,'vy')
+          FEX(3) = mms_hydrofrac(x,y,t,iblock,'sxx')
+          FEX(4) = mms_hydrofrac(x,y,t,iblock,'sxy')
+          FEX(5) = mms_hydrofrac(x,y,t,iblock,'syy')
           FEX(6) = 0d0
        end select
        call rotate_fields_xy2nt(FEX,normal,vtEX,vnEX,sttEX,sntEX,snnEX,szzEX)
@@ -375,7 +382,7 @@ contains
     select case(bc)
     case default
        Fhat = Fhat+F0
-    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+    case('inplane-bessel-w','mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
        ! initial fields not required 
     end select
     

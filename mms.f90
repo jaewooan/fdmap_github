@@ -431,6 +431,7 @@ contains
     w = 2d0*pi
     k = 4d0*pi
 
+
     select case(field)
     case('vx','vy','V')
         ! need to be careful since slip and sxy must have the same sign at the
@@ -531,5 +532,153 @@ contains
 
   end function mms_simple
 
+  function mms_hydrofrac(x,y,t,side,field) result(F)
+
+    !use ifport ! for Intel Fortran compiler
+
+    implicit none
+
+    real,intent(in) :: x,y,t
+    integer,intent(in) :: side
+    character(*),intent(in) :: field
+    real :: F
+
+    real :: r2,syy,sxy,sxx,vx,vy,pi
+    real :: vx_t,vx_x,vx_y
+    real :: vy_t,vy_x,vy_y
+    real :: M_x, M_y
+    real :: syy_t,syy_x,syy_y
+    real :: sxy_t,sxy_x,sxy_y
+    real :: sxx_t,sxx_x,sxx_y
+    real :: w,k,A
+    real :: I_w,I_v,I_sxy,s_p,s_v
+
+
+    ! MMS using displacement field:
+    ! ux =   Ax*cos(k*x + k*y + w*t)
+    ! uy = - Ax*cos(k*x + k*y + w*t)
+    ! uz = 0
+
+    !WARNING: These parameters must match the parameters in the input file
+    real :: G,cs = 3d3, cp = 5d3, rho = 2.6d0, lambda, Zs
+    real :: w0 = 1e-3, K0 = 1d3, rho0 = 1d0,mu = 1d-6
+    G = rho*cs**2
+    lambda = rho*cp**2 - 2d0*G
+    Zs = rho*cs
+
+    pi = 4d0 * datan(1d0)
+    w = 100000*2d0*pi ! omega
+    k = 10*2d0*pi ! wave number
+    A = 2d0*pi/w   ! amplitude
+! Solid
+! Velocities:
+vx =  A*w*cos(k*x)*cos(k*y)*cos(t*w)
+vy =  -A*w*cos(k*x)*cos(k*y)*cos(t*w)
+! Stresses:
+sxx =  -2.0*A*G*k*sin(k*x)*sin(t*w)*cos(k*y) + lambda*(-1.0*A*k*sin(k*x)*sin(t*w)*cos(k*y)&
++ 1.0*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+syy =  2.0*A*G*k*sin(k*y)*sin(t*w)*cos(k*x) + lambda*(-1.0*A*k*sin(k*x)*sin(t*w)*cos(k*y)&
++ 1.0*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+sxy =  2*G*(0.5*A*k*sin(k*x)*sin(t*w)*cos(k*y) - 0.5*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+! Source function for momentum balance:
+M_x =  -A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (-2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k*y)&
++ 2*G*(-0.5*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) - 0.5*A*k**2*sin(t*w)*cos(k*x)*cos(k*y))&
++ lambda*(-1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) - 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
+M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k*y)&
++ 2*G*(0.5*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 0.5*A*k**2*sin(t*w)*cos(k*x)*cos(k*y))&
++ lambda*(1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
+
+! Fluid
+
+! Forcing functions
+
+! Interface conditions
+! Vertical velocity
+I_w =  -A*w*cos(k*x)*cos(k*y)*cos(t*w)
+! Horizontal velocity
+I_v =  -A*w*cos(k*x)*cos(k*y)*cos(t*w) + w*(-w0 + y)*(w0 + y)*cos(k*x)*cos(t*w)
+! Traction
+I_sxy =  1.0*A*G*k*sin(k*x)*sin(t*w) - mu*(w*(-w0 + y)*cos(k*x)*cos(t*w)&
++ w*(w0 + y)*cos(k*x)*cos(t*w))
+
+! Governing equations
+! Mass balance
+s_p =  -A*K0*w*cos(k*x)*cos(k*y)*cos(t*w) + 1.0*A*k*lambda*w*sin(k*x)*cos(t*w)&
+- k*w*w0**2*y*sin(k*x)*cos(t*w) + k*w*y**3*sin(k*x)*cos(t*w)/3
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(-w0 + y)*(w0&
++ y)*sin(t*w)*cos(k*x)
+    ! Fields
+    select case(field)
+    case('vx','vy')
+        select case(field)
+        case('vx')
+            F = vx
+            return
+        case('vy')
+            F = vy
+            return
+        end select
+    case('sxx','syy','sxy')
+        select case(field)
+        case('sxx')
+            F = sxx
+            return
+        case('syy')
+            F = syy
+            return
+        case('sxy')
+            F = sxy
+            return
+        end select
+    ! Source (force function)
+    case('s_vx','s_vy')
+        select case(field)
+        case('s_vx')
+            F = M_x
+            return
+        case('s_vy')
+            F = M_y
+            return
+        end select
+    case('s_sxx','s_syy','s_sxy')
+        select case(field)
+        case('s_sxx')
+            F = 0d0 
+            return
+        case('s_syy')
+            F = 0d0
+            return
+        case('s_xy')
+            F = 0d0
+            return
+        end select
+    ! Forcing function for fluid mass and momentum balance
+    case('s_p','s_v')
+        select case(field)
+        case('s_v')
+            F = s_v 
+            return
+        case('s_p')
+            F = s_p
+            return
+        end select
+    ! Forcing function for interface
+    case('I_w','I_v','I_sxy')
+        select case(field)
+        case('I_w')
+            F = I_w
+            return
+        case('I_v')
+            F = I_v
+        case('I_sxy')
+            F = I_sxy
+            return
+        end select
+    end select
+
+    F = 0d0
+
+  end function mms_hydrofrac
 
 end module mms
