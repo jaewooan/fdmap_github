@@ -551,7 +551,9 @@ contains
     real :: sxy_t,sxy_x,sxy_y
     real :: sxx_t,sxx_x,sxx_y
     real :: w,k,A
-    real :: I_w,I_v,I_sxy,s_p,s_v
+    real :: p,v
+    real :: I_w,I_vp,I_vm,I_taum,I_taup,s_p,s_v, &
+            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat
 
 
     ! MMS using displacement field:
@@ -567,7 +569,7 @@ contains
     Zs = rho*cs
 
     pi = 4d0 * datan(1d0)
-    w = 100000*2d0*pi ! omega
+    w = 100*2d0*pi ! omega
     k = 10*2d0*pi ! wave number
     A = 2d0*pi/w   ! amplitude
 ! Solid
@@ -590,24 +592,34 @@ M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k
 
 ! Fluid
 
+! Solution
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  w*(y - 0.0005)*(y + 0.0005)*cos(k*x)*cos(t*w)
+
 ! Forcing functions
 
+! Boundary conditions
+ bcL_uhat =  1.66666666666667e-7*w*cos(0.25*k)*cos(t*w)
+ bcL_phat =  1.0*A*k*lambda*sin(0.25*k)*sin(t*w)
+ bcR_uhat =  1.66666666666667e-7*w*cos(0.75*k)*cos(t*w)
+ bcR_phat =  1.0*A*k*lambda*sin(0.75*k)*sin(t*w)
 ! Interface conditions
 ! Vertical velocity
-I_w =  -A*w*cos(k*x)*cos(k*y)*cos(t*w)
+I_w =  0
 ! Horizontal velocity
-I_v =  -A*w*cos(k*x)*cos(k*y)*cos(t*w) + w*(-w0 + y)*(w0 + y)*cos(k*x)*cos(t*w)
-! Traction
-I_sxy =  1.0*A*G*k*sin(k*x)*sin(t*w) - mu*(w*(-w0 + y)*cos(k*x)*cos(t*w)&
-+ w*(w0 + y)*cos(k*x)*cos(t*w))
+I_vm =  -A*w*cos(k*x)*cos(t*w)
+I_vp =  -A*w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) + 0.001*mu*w*cos(k*x)*cos(t*w)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) - 0.001*mu*w*cos(k*x)*cos(t*w)
 
 ! Governing equations
 ! Mass balance
-s_p =  -A*K0*w*cos(k*x)*cos(k*y)*cos(t*w) + 1.0*A*k*lambda*w*sin(k*x)*cos(t*w)&
-- k*w*w0**2*y*sin(k*x)*cos(t*w) + k*w*y**3*sin(k*x)*cos(t*w)/3
+s_p =  1.0*A*k*lambda*w*sin(k*x)*cos(t*w) + 1.66666666666667e-7*k*w*sin(k*x)*cos(t*w)
 ! Momentum balance
-s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(-w0 + y)*(w0&
-+ y)*sin(t*w)*cos(k*x)
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(y - 0.0005)*(y&
++ 0.0005)*sin(t*w)*cos(k*x)
+
     ! Fields
     select case(field)
     case('vx','vy')
@@ -653,6 +665,15 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(-w0 + y)*(w0&
             F = 0d0
             return
         end select
+    case('p','v')
+        select case(field)
+        case('p')
+            F = p
+            return
+        case('v')
+            F = v
+            return
+        end select
     ! Forcing function for fluid mass and momentum balance
     case('s_p','s_v')
         select case(field)
@@ -663,16 +684,39 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(-w0 + y)*(w0&
             F = s_p
             return
         end select
-    ! Forcing function for interface
-    case('I_w','I_v','I_sxy')
+    ! Forcing function for boundary conditions
+    case('bcL_uhat','bcL_phat','bcR_uhat','bcR_phat')
+        select case(field)
+        case('bcL_uhat')
+            F = bcL_uhat
+            return
+        case('bcL_phat')
+            F = bcL_phat
+            return
+        case('bcR_uhat')
+            F = bcR_uhat
+            return
+        case('bcR_phat')
+            F = bcR_phat
+            return
+        end select
+    ! Forcing function for interface conditions
+    case('I_w','I_vm','I_vp','I_taum','I_taup')
         select case(field)
         case('I_w')
             F = I_w
             return
-        case('I_v')
-            F = I_v
-        case('I_sxy')
-            F = I_sxy
+        case('I_vm')
+            F = I_vm
+            return
+        case('I_vp')
+            F = I_vp
+            return
+        case('I_taum')
+            F = I_taum
+            return
+        case('I_taup')
+            F = I_taup
             return
         end select
     end select

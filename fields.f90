@@ -765,6 +765,8 @@ contains
        A = smooth  (r,1d0,1d0,0d0)
     case('gaussian')
        A = gaussian(r,1d0,1d0,0d0)
+    case('dy_gaussian')
+       A = -(y-P%y0)/(P%Ly**2)*exp(-0.5*(y - P%y0)**2/(P%Ly**2))
     end select
 
   end function perturb_fields
@@ -774,7 +776,8 @@ contains
 
     use utilities, only : step
     use material, only : block_material
-    use mms, only : bessel,inplane_bessel,inplane_fault_mms,mms_sin
+    use mms, only : &
+    bessel,inplane_bessel,inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
 
     implicit none
 
@@ -831,6 +834,26 @@ contains
        F(4) = F(4)+mms_sin(x,y,t,iblock,'sxy')
        F(5) = F(5)+mms_sin(x,y,t,iblock,'syy')
        F(6) = F(6)+mms_sin(x,y,t,iblock,'szz')
+    case('mms-simple')
+       ! verification using method of manufactured solutions
+       ! for curvilinear
+       ! mode II only
+       F(1) = F(1)+mms_simple(x,y,t,iblock,'vx')
+       F(2) = F(2)+mms_simple(x,y,t,iblock,'vy')
+       F(3) = F(3)+mms_simple(x,y,t,iblock,'sxx')
+       F(4) = F(4)+mms_simple(x,y,t,iblock,'sxy')
+       F(5) = F(5)+mms_simple(x,y,t,iblock,'syy')
+       F(6) = F(6)+mms_simple(x,y,t,iblock,'szz')
+    case('mms-hydrofrac')
+       ! verification using method of manufactured solutions
+       ! for curvilinear
+       ! mode II only
+       F(1) = F(1)+mms_hydrofrac(x,y,t,iblock,'vx')
+       F(2) = F(2)+mms_hydrofrac(x,y,t,iblock,'vy')
+       F(3) = F(3)+mms_hydrofrac(x,y,t,iblock,'sxx')
+       F(4) = F(4)+mms_hydrofrac(x,y,t,iblock,'sxy')
+       F(5) = F(5)+mms_hydrofrac(x,y,t,iblock,'syy')
+       F(6) = F(6)+mms_hydrofrac(x,y,t,iblock,'szz')
     end select
 
   end subroutine initial_fields

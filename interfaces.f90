@@ -1001,7 +1001,7 @@ contains
                                        gammam,gammap,x,y,t,i,HF,phip,vnm,vnp,vtm,vtp,sntm,sntp)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use hydrofrac, only : hf_type,fluid_stresses
+    use hydrofrac, only : hf_type,fluid_stresses,mms_velocities
 
     implicit none
 
@@ -1049,7 +1049,7 @@ contains
 
     ! shear and normal tractions exerted by the fluid on the solid walls
 
-    call fluid_stresses(HF,i,p,taum,taup)
+    call fluid_stresses(HF,i,x,y,t,p,taum,taup)
 
     ! balance normal tractions
 
@@ -1082,6 +1082,7 @@ contains
     ! Send grid-values to fluid
     vtp = vtFDp
     vtm = vtFDm
+    if(HF%use_mms) call mms_velocities(x,y,t,vtm,vtp)
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 

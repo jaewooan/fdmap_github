@@ -40,8 +40,6 @@ module hydrofrac
   ! K0 = bulk modulus
   ! C0 = sound speed
   ! mu = dynamic viscosity
-  ! c1 = momentum diffusion speed
-  ! Z  = viscous impedance
   ! N = number of points resolving width
   ! WM,WP = position of minus (lower) and upper walls (wp-wm=width)
   ! WM0,WP0 = initial values of wm,wp
@@ -78,7 +76,7 @@ module hydrofrac
      character(1) :: direction
      real :: &
      rho0,K0,mu,c0,&
-     c1,Z1,h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
+     h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
      bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
      character(256) :: bcL,bcR
      real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai
@@ -252,6 +250,9 @@ contains
        call write_matlab(echo,'bcRA',HF%bcRA,HFstr)
        call write_matlab(echo,'bcRomega',HF%bcRomega,HFstr)
 
+       ! MMS
+       call write_matlab(echo,'use_mms',HF%use_mms,HFstr)
+
     end if
 
     ! return if not needed
@@ -363,18 +364,12 @@ contains
     ! Compute Width-averaging norm operator
     call Hnorm(HF%Hw)
 
-    ! Initialize solution using MMS
-    if(HF%use_mms) call mms_init(HF,m,p,x,y,0d0)
 
     if(HF%inviscid) return
 
     ! Compute grid spacings in the cross-section direction (y)
     HF%hy = (HF%wp0 - HF%wm0)/(HF%n - 1)
     
-
-    ! Momentum diffusion speed and impedance 
-    HF%c1 = HF%mu/(HF%rho0*maxval(HF%wp0 - HF%wm0))
-    HF%Z1 = HF%c1*HF%rho0
 
     ! Set SAT penalty weights for viscous terms
     ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
@@ -406,6 +401,9 @@ contains
             end if
         end if
     end if 
+    
+    ! Initialize solution using MMS
+    if(HF%use_mms) call mms_init(HF,m,p,x,y)
     
 
   end subroutine init_hydrofrac
@@ -680,6 +678,7 @@ contains
     end if
 
 
+
     call set_rates_viscous(HF,m,p,vtm,vtp)
 
     
@@ -706,6 +705,9 @@ contains
            end do
         end if
     end if
+    
+    ! Use mms
+    if(HF%use_mms) call mms_source_terms(HF,m,p,x,y,t)
 
     ! TODO: Implement this properly
     if (.not. HF%linearized_walls) then
@@ -926,25 +928,91 @@ contains
 
   end subroutine
 
-  subroutine mms_init(HF,m,p,x,y,t)
+  subroutine mms_init(HF,m,p,x,y)
       use mms, only: mms_hydrofrac
+
+      implicit none
 
       type(HF_type),intent(inout) :: HF
       integer,intent(in) :: m,p
       real,dimension(m:p),intent(in) :: x,y
-      real,intent(in) :: t
+
+      integer :: i,j
+      real :: t,y_
 
 
 
+      if(.not. HF%use_mms) return
+
+
+      t = 0d0
+
+      ! Init mms solution on equidistant grid
+      do i=m,p
+        do j=1,HF%n
+            y_ = HF%wm0(i) + HF%hy(i)*(j-1)
+            HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
+        end do
+            HF%p(i) = mms_hydrofrac(x(i),0d0,t,0,'p')
+      end do
 
   end subroutine
 
-  subroutine fluid_stresses(HF,i,p,taum,taup)
+  subroutine mms_stresses(x,y,t,taum,taup)
+      use mms, only: mms_hydrofrac
+
+      implicit none
+
+      real,intent(in) :: x,y,t
+      real,intent(inout) :: taum,taup
+
+      taum = taum + mms_hydrofrac(x,y,t,0,'I_taum')
+      taup = taup + mms_hydrofrac(x,y,t,0,'I_taup')
+
+  end subroutine
+  
+  subroutine mms_velocities(x,y,t,vtm,vtp)
+      use mms, only: mms_hydrofrac
+
+      implicit none
+
+      real,intent(in) :: x,y,t
+      real,intent(inout) :: vtm,vtp
+
+      vtm = vtm + mms_hydrofrac(x,y,t,0,'I_vtm')
+      vtp = vtp + mms_hydrofrac(x,y,t,0,'I_vtp')
+
+  end subroutine
+
+  subroutine mms_source_terms(HF,m,p,x,y,t)
+      use mms, only: mms_hydrofrac
+
+      implicit none
+
+      type(HF_type),intent(inout) :: HF
+      integer,intent(in) :: m,p
+      real,intent(in) :: x(m:p),y(m:p),t
+
+      integer :: i,j
+      real :: y_
+      
+      do i=m,p
+        do j=1,HF%n
+            y_ = HF%wm0(i) + HF%hy(i)*(j-1)
+            HF%Dv(j,i) = HF%Dv(j,i) + mms_hydrofrac(x(i),y_,t,0,'s_v')
+        end do
+            HF%Dp(i) = HF%Dp(i) + mms_hydrofrac(x(i),0d0,t,0,'s_p')
+      end do
+
+  end subroutine
+
+  subroutine fluid_stresses(HF,i,x,y,t,p,taum,taup)
 
     implicit none
 
     type(HF_type),intent(in) :: HF
     integer,intent(in) :: i
+    real,intent(in) :: x,y,t
     real,intent(out) :: p,taum,taup
 
     ! fluid pressure
@@ -978,6 +1046,8 @@ contains
         taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
         taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
     end if
+
+    if(HF%use_mms) call mms_stresses(x,y,t,taum,taup)
 
 
   end subroutine fluid_stresses
