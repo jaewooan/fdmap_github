@@ -1047,15 +1047,9 @@ contains
     Zpip = 1d0/Zpp
     Zpim = 1d0/Zpm
 
-
-    ! Characteristic variables for S-waves into the interface
-    ! on the minus and plus side
-    wm = sntFDm - Zsm*vtFDm 
-    wp = sntFDp + Zsp*vtFDp 
-
     ! shear and normal tractions exerted by the fluid on the solid walls
 
-    call fluid_stresses(HF,i,p,wm,wp,Zsm,Zsp,taum,taup)
+    call fluid_stresses(HF,i,p,taum,taup)
 
     ! balance normal tractions
 
@@ -1084,6 +1078,10 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+
+    ! Send grid-values to fluid
+    vtp = vtFDp
+    vtm = vtFDm
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 

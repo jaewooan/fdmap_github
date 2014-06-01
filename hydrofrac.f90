@@ -379,11 +379,16 @@ contains
     ! Set SAT penalty weights for viscous terms
     ! S(1)*(v - g) + S(2)*(Dv - g) + S(3)*D^T*(v - g) + S(4)*D^T*(Dv - g)
 
-    HF%SATym(1) = - HF%c1
-    HF%SATym(4) = - HF%mu/HF%rho0
+    HF%SATym(1) = 0d0
+    HF%SATym(2) = 0d0
+    HF%SATym(3) = HF%mu/HF%rho0
+    HF%SATym(4) = 0d0
     
-    HF%SATyp(1) = - HF%c1
-    HF%SATyp(4) = - HF%mu/HF%rho0
+    HF%SATyp(1) = 0d0
+    HF%SATyp(2) = 0d0
+    HF%SATyp(3) = - HF%mu/HF%rho0
+    HF%SATyp(4) = 0d0
+    
     
     ! Initialize second derivative SBP operator
     if( .not. inviscid) then
@@ -934,15 +939,13 @@ contains
 
   end subroutine
 
-  subroutine fluid_stresses(HF,i,p,wsm,wsp,Zsm,Zsp,taum,taup)
+  subroutine fluid_stresses(HF,i,p,taum,taup)
 
     implicit none
 
     type(HF_type),intent(in) :: HF
     integer,intent(in) :: i
-    real,intent(in) :: wsm,wsp,Zsm,Zsp
     real,intent(out) :: p,taum,taup
-    real :: Z,Wm,Wp,wfm,wfp,vtm,vtp
 
     ! fluid pressure
 
@@ -975,33 +978,6 @@ contains
         taum = taum + HF%mu*diff_bnd_m(HF%v(:,i),HF%fd2)/HF%hy(i)
         taup = taup + HF%mu*diff_bnd_p(HF%v(:,i),HF%fd2)/HF%hy(i)
     end if
-
-
-    ! Hat variables
-    ! Specify characteristic variable going into the fluid
-    ! Wm:  fluid characteristic into the interface on minus side
-    ! Wp:   fluid characteristic into the interface on plus side
-    ! wfm:  fluid characteristic leaving the interface on minus side
-    ! wfp:   fluid characteristic leaving the interface on plus side
-    ! wsm: solid characteristic into the interface on minus side
-    ! wsp:  solid characteristic into the interface on plus side
-    
-    ! Momentum diffusion impedance
-    Z  = HF%Z1
-    
-    ! Tangential velocities
-    vtm = HF%v(1,i)
-    vtp = HF%v(HF%n,i)
-
-    wfm = taum - Z*vtm
-    wfp = taup + Z*vtp
-
-    Wm = 1/(Z + Zsm)*((Zsm - Z)*wfp + 2*Z*wsm)
-    Wp = 1/(Z + Zsp)*((Zsp - Z)*wfm + 2*Z*wsp)
-    
-    
-    taum = 0.5*(Wm + wfp)
-    taup = 0.5*(Wp + wfm)
 
 
   end subroutine fluid_stresses
@@ -1088,10 +1064,10 @@ contains
     if(HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
-       b(1) = b(1)       - dt*HF%SATym(1)*HF%dydetai(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
-       b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%dydetai(HF%n)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
-       call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
-       call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       b(1) = b(1)       - dt*HF%SATym(2)*HF%dydetai(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+       b(HF%n) = b(HF%n) - dt*HF%SATyp(2)*HF%dydetai(HF%n)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
+       call diff_T_bnd_p(b,-dt*HF%dydetai(HF%n)**2*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_m(b,-dt*HF%dydetai(1)**2   *HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
        A =  - dt*HF%fd2%D2/HF%hy(i)**2
        ! Add identity matrix
        do j=1,HF%n
@@ -1105,10 +1081,12 @@ contains
     if(.not. HF%variable_grid_spacing) then
     do i = m,p
        b = HF%v(:,i)
-       b(1) = b(1)  - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
-       b(n) = b(n)  - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/HF%hy(i)
-       call diff_T_bnd_p(b,-dt*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
-       call diff_T_bnd_m(b,-dt*HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       b(1) = b(1)  - dt*HF%SATym(2)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+       b(n) = b(n)  - dt*HF%SATyp(2)*HF%fd2%H00i*vtp(i)/HF%hy(i)
+       
+       call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+       call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
+
        A =  - dt*(HF%fd2%D2/HF%hy(i)**2)
        !A(1,1) = A(1,1) -dt*HF%SATym(1)*HF%fd2%H00i/HF%hy(i)**2
        !A(n,n) = A(n,n) -dt*HF%SATyp(1)*HF%fd2%H00i/HF%hy(i)**2
@@ -1151,10 +1129,10 @@ contains
     if(HF%variable_grid_spacing) then
        do i = m,p
           b = HF%v(:,i)
-          b(1) = b(1) - dt*HF%SATym(1)*HF%fd2%H00i*HF%dydetai(1)*vtm(i)/HF%hy(i)
-          b(n) = b(n) - dt*HF%SATyp(1)*HF%fd2%H00i*HF%dydetai(n)*vtp(i)/Hf%hy(i)
-          call diff_T_bnd_m(b,-dt*HF%SATym(4)*HF%dydetai(1)**2*vtm(i)/HF%hy(i)**2,HF%fd2)
-          call diff_T_bnd_p(b,-dt*HF%SATyp(4)*HF%dydetai(n)**2*vtp(i)/HF%hy(i)**2,HF%fd2)
+          b(1) = b(1) - dt*HF%SATym(2)*HF%fd2%H00i*HF%dydetai(1)*vtm(i)/HF%hy(i)
+          b(n) = b(n) - dt*HF%SATyp(2)*HF%fd2%H00i*HF%dydetai(n)*vtp(i)/Hf%hy(i)
+          call diff_T_bnd_m(b,-dt*HF%SATym(3)*HF%dydetai(1)**2*vtm(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*HF%dydetai(n)**2*vtp(i)/HF%hy(i)**2,HF%fd2)
           A =  - dt*HF%fd2%bD2/HF%hy(i)**2
           ! Add identity matrix to banded matrix
           do j=1,n
@@ -1168,10 +1146,10 @@ contains
     if(.not. HF%variable_grid_spacing) then
        do i = m,p
           b = HF%v(:,i)
-          b(1) = b(1)       - dt*HF%SATym(1)*HF%fd2%H00i*vtm(i)/HF%hy(i)
-          b(HF%n) = b(HF%n) - dt*HF%SATyp(1)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
-          call diff_T_bnd_m(b,-dt*HF%SATym(4)*vtm(i)/HF%hy(i)**2,HF%fd2)
-          call diff_T_bnd_p(b,-dt*HF%SATyp(4)*vtp(i)/HF%hy(i)**2,HF%fd2)
+          b(1) = b(1)       - dt*HF%SATym(2)*HF%fd2%H00i*vtm(i)/HF%hy(i)
+          b(HF%n) = b(HF%n) - dt*HF%SATyp(2)*HF%fd2%H00i*vtp(i)/Hf%hy(i)
+          call diff_T_bnd_m(b,-dt*HF%SATym(3)*vtm(i)/HF%hy(i)**2,HF%fd2)
+          call diff_T_bnd_p(b,-dt*HF%SATyp(3)*vtp(i)/HF%hy(i)**2,HF%fd2)
           A =  - dt*HF%fd2%bD2/HF%hy(i)**2
           ! Add identity matrix to banded matrix
           do j=1,n
@@ -1291,13 +1269,13 @@ contains
          ! Penalize v using v-hat = u_dot-hat
          ! Two penalties are applied:  
          ! sigma1*(v - vhat) + sigma2*D^T*(v - vhat)
-         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(1)*HF%fd2%H00i*(HF%v(1,i) -vtm(i))/HF%hy(i)
-         gm = HF%SATym(4)*(HF%v(1,i) - vtm(i))/HF%hy(i)**2
+         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2)*HF%fd2%H00i*(HF%v(1,i) -vtm(i))/HF%hy(i)
+         gm = HF%SATym(3)*(HF%v(1,i) - vtm(i))/HF%hy(i)**2
          call diff_T_bnd_m(HF%Dv(:,i),gm,HF%fd2)
 
          ! SAT terms, plus boundary
-         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(1)*HF%fd2%H00i*(HF%v(HF%n,i) - vtp(i))/HF%hy(i) 
-         gp = HF%SATyp(4)*(HF%v(HF%n,i) - vtp(i))/HF%hy(i)**2
+         HF%Dv(HF%n,i) = HF%Dv(HF%n,i) + HF%SATyp(2)*HF%fd2%H00i*(HF%v(HF%n,i) - vtp(i))/HF%hy(i) 
+         gp = HF%SATyp(3)*(HF%v(HF%n,i) - vtp(i))/HF%hy(i)**2
          call diff_T_bnd_p(HF%Dv(:,i),gp,HF%fd2)
       end do
 
@@ -1589,11 +1567,11 @@ contains
       ! as 1/h^2
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
 
-      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(1)*HF%fd2%H00i
-      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(1)*HF%fd2%H00i
+      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(2)*HF%fd2%H00i
+      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(2)*HF%fd2%H00i
 
-      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(4),HF%fd2)
-      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(4),HF%fd2)
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%SATym(3),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%SATyp(3),HF%fd2)
 
       ! Pack the matrix into a banded matrix if requested
       if(HF%banded_storage) then
@@ -1679,11 +1657,11 @@ contains
       HF%fd2%D2 = HF%mu/HF%rho0*HF%fd2%D2
       ! Note that one penalty term is not included in D2 since it does not scale
       ! as 1/h^2  (looks like it should scale like that, why?)
-      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(1)*HF%fd2%H00i*HF%dydetai(1)
-      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(1)*HF%fd2%H00i*HF%dydetai(n)
+      HF%fd2%D2(1,1) = HF%fd2%D2(1,1) + HF%SATym(2)*HF%fd2%H00i*HF%dydetai(1)
+      HF%fd2%D2(n,n) = HF%fd2%D2(n,n) + HF%SATyp(2)*HF%fd2%H00i*HF%dydetai(n)
 
-      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydetai(1)**2*HF%SATym(4),HF%fd2)
-      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydetai(n)**2*HF%SATyp(4),HF%fd2)
+      call diff_T_bnd_m(HF%fd2%D2(:,1)   ,HF%dydetai(1)**2*HF%SATym(3),HF%fd2)
+      call diff_T_bnd_p(HF%fd2%D2(:,HF%n),HF%dydetai(n)**2*HF%SATyp(3),HF%fd2)
 
       ! Pack the matrix into a banded matrix if requested
       if(HF%banded_storage) then
