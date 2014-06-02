@@ -152,7 +152,7 @@ contains
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call update_fields_iface_implicit(D%I(i),D%B(im)%F,D%B(ip)%F,dt)
+       call update_fields_iface_implicit(D%I(i),D%B(im)%F,D%B(ip)%F,D%t,dt)
     end do
 
     ! exchange fields between processes

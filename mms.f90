@@ -550,10 +550,12 @@ contains
     real :: syy_t,syy_x,syy_y
     real :: sxy_t,sxy_x,sxy_y
     real :: sxx_t,sxx_x,sxx_y
-    real :: w,k,A
-    real :: p,v
-    real :: I_w,I_vp,I_vm,I_taum,I_taup,s_p,s_v, &
-            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat
+    real :: w,k,A,B
+    real :: p,v,u
+    real :: I_w,I_vtp,I_vtm,I_taum,I_taup,s_p,s_v, &
+            vtm,vtp,&
+            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat, &
+            dpdx
 
 
     ! MMS using displacement field:
@@ -563,16 +565,30 @@ contains
 
     !WARNING: These parameters must match the parameters in the input file
     real :: G,cs = 3d3, cp = 5d3, rho = 2.6d0, lambda, Zs
-    real :: w0 = 1e-3, K0 = 1d3, rho0 = 1d0,mu = 1d-6
+    real :: K0 = 1d3, rho0 = 1d0,mu = 1d-6
+    
+    ! Fracture width and crack tips
+    real :: wm0 = -1.0d0, wp0 = 1.0d0, xL = -5d0, xR = 5d0 
+    
+    cs = 3d0
+    cp = 5d0
+    rho = 2.6d0
+    K0 = 1d0
+    rho0 = 1d0
+    mu = 1d0
+
     G = rho*cs**2
     lambda = rho*cp**2 - 2d0*G
     Zs = rho*cs
 
     pi = 4d0 * datan(1d0)
-    w = 100*2d0*pi ! omega
-    k = 10*2d0*pi ! wave number
-    A = 2d0*pi/w   ! amplitude
+    w = 2d0*pi ! omega
+    k = 2d0*pi/5d0 ! wave number
+    A = 2d0*pi/(lambda)   ! amplitude
+    B = 1d0 ! Fluid amplitude
+
 ! Solid
+
 ! Velocities:
 vx =  A*w*cos(k*x)*cos(k*y)*cos(t*w)
 vy =  -A*w*cos(k*x)*cos(k*y)*cos(t*w)
@@ -592,33 +608,47 @@ M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k
 
 ! Fluid
 
-! Solution
+! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
-v =  w*(y - 0.0005)*(y + 0.0005)*cos(k*x)*cos(t*w)
+v =  w*cos(k*x)*cos(t*w)
+u =  w*cos(k*x)*cos(t*w)
 
 ! Forcing functions
 
 ! Boundary conditions
- bcL_uhat =  1.66666666666667e-7*w*cos(0.25*k)*cos(t*w)
- bcL_phat =  1.0*A*k*lambda*sin(0.25*k)*sin(t*w)
- bcR_uhat =  1.66666666666667e-7*w*cos(0.75*k)*cos(t*w)
- bcR_phat =  1.0*A*k*lambda*sin(0.75*k)*sin(t*w)
+
+ bcL_uhat =  w*cos(k*xL)*cos(t*w)
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  w*cos(k*xR)*cos(t*w)
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
 ! Interface conditions
-! Vertical velocity
+
+! Normal velocity
 I_w =  0
-! Horizontal velocity
-I_vm =  -A*w*cos(k*x)*cos(t*w)
-I_vp =  -A*w*cos(k*x)*cos(t*w)
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
 ! Tractions
-I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) + 0.001*mu*w*cos(k*x)*cos(t*w)
-I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) - 0.001*mu*w*cos(k*x)*cos(t*w)
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w)
 
 ! Governing equations
+
 ! Mass balance
-s_p =  1.0*A*k*lambda*w*sin(k*x)*cos(t*w) + 1.66666666666667e-7*k*w*sin(k*x)*cos(t*w)
+s_p =  k*w*(1.0*A*lambda - K0)*sin(k*x)*cos(t*w)
 ! Momentum balance
-s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(y - 0.0005)*(y&
-+ 0.0005)*sin(t*w)*cos(k*x)
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 - w**2*sin(t*w)*cos(k*x)
+
+! Exact interface conditions
+vtm =  w*cos(k*x)*cos(t*w)
+vtp =  w*cos(k*x)*cos(t*w)
+
+! Other
+dpdx =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)
+
+
 
     ! Fields
     select case(field)
@@ -706,11 +736,11 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(y - 0.0005)*(y&
         case('I_w')
             F = I_w
             return
-        case('I_vm')
-            F = I_vm
+        case('I_vtm')
+            F = I_vtm
             return
-        case('I_vp')
-            F = I_vp
+        case('I_vtp')
+            F = I_vtp
             return
         case('I_taum')
             F = I_taum
@@ -719,6 +749,18 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x) - rho0*w**2*(y - 0.0005)*(y&
             F = I_taup
             return
         end select
+    case('vtm','vtp')
+        select case(field)
+        case('vtp')
+            F = vtp
+            return
+        case('vtm')
+            F = vtm
+            return
+        end select
+    case('dpdx')
+        F = dpdx
+        return
     end select
 
     F = 0d0

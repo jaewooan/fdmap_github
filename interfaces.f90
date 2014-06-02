@@ -442,7 +442,7 @@ contains
   end subroutine update_fields_iface
 
 
-  subroutine update_fields_iface_implicit(I,Fm,Fp,dt)
+  subroutine update_fields_iface_implicit(I,Fm,Fp,t,dt)
 
     use fields, only : block_fields
     !use thermpres, only : update_fields_thermpres
@@ -452,8 +452,8 @@ contains
 
     type(iface_type),intent(inout) :: I
     type(block_fields),intent(in) :: Fm,Fp
-    real,intent(in) :: dt
-    real,dimension(I%m:I%p) :: phip,vtFDp,vtFDm
+    real,intent(in) :: t,dt
+    real,dimension(I%m:I%p) :: phip,vtp,vtm
 
     integer,parameter :: mode = 2
 
@@ -478,24 +478,24 @@ contains
        select case(I%direction)
        case('x')
           ! x 
-          call get_hydrofrac_interface(I%m,I%p, &
+          call get_hydrofrac_interface(I%HF,I%m,I%p, &
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),phip,vtFDp,vtFDm)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,phip,vtp,vtm)
           call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
                Fm%bndFR%M(I%m:I%p,2),Fp%bndFL%M(I%m:I%p,2), &
-               phip,vtFDp,vtFDm,dt)
+               phip,vtp,vtm,dt)
        case('y')
           ! y
-          call get_hydrofrac_interface(I%m,I%p, &
+          call get_hydrofrac_interface(I%HF,I%m,I%p, &
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),phip,vtFDp,vtFDm)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,phip,vtp,vtm)
           call update_fields_hydrofrac_implicit(I%HF,I%m,I%p, &
                Fm%bndFT%M(I%m:I%p,2),Fp%bndFB%M(I%m:I%p,2), &
-               phip,vtFDp,vtFDm,dt)
+               phip,vtp,vtm,dt)
        end select
 
     end select
@@ -1002,6 +1002,7 @@ contains
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use hydrofrac, only : hf_type,fluid_stresses,mms_velocities
+    use mms, only : mms_hydrofrac
 
     implicit none
 
@@ -1084,6 +1085,12 @@ contains
     vtm = vtFDm
     if(HF%use_mms) call mms_velocities(x,y,t,vtm,vtp)
 
+    ! Exact tangential velocity used by mms
+    if(HF%use_mms) then
+        vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
+        vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
+    end if
+
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 
     !etap = 1d0/(Zpip+Zpim)
@@ -1093,27 +1100,29 @@ contains
 
   end subroutine hydrofrac_interface_mode2
 
-  subroutine get_hydrofrac_interface(m,p,Fm,Fp,Mm,Mp,nhat,mode,x,y, &
-                                     phip,vtFDp,vtFDm)
+  subroutine get_hydrofrac_interface(HF,m,p,Fm,Fp,Mm,Mp,nhat,mode,x,y,t, &
+                                     phip,vtp,vtm)
 
     use hydrofrac, only : hf_type
     use io, only : error
 
     implicit none
 
+    type(hf_type),intent(in) :: HF
     integer,intent(in) :: m,p,mode
     real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
     real,dimension(m:p),intent(in) :: x,y
-    real,dimension(m:p),intent(out) :: phip,vtFDp,vtFDm
+    real,intent(in) :: t
+    real,dimension(m:p),intent(out) :: phip,vtp,vtm
 
     integer :: i
 
     do i = m,p
        select case(mode)
        case(2)
-          call get_hydrofrac_interface_mode2(Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i), &
-               phip(i),vtFDp(i),vtFDm(i))
+          call get_hydrofrac_interface_mode2(HF,Fm(i,:),Fp(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t, &
+               phip(i),vtp(i),vtm(i))
        case(3)
           call error('No hydraulic fractures in antiplane shear','enforce_hydrofrac_interface')
        end select
@@ -1121,21 +1130,23 @@ contains
     
  end subroutine get_hydrofrac_interface
 
- subroutine get_hydrofrac_interface_mode2(Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
-                                       gammam,gammap,x,y,phip,vtFDp,vtFDm)
+ subroutine get_hydrofrac_interface_mode2(HF,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,&
+                                       gammam,gammap,x,y,t,phip,vtp,vtm)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use hydrofrac, only : hf_type,fluid_stresses
+    use hydrofrac, only : hf_type,fluid_stresses,mms_velocities
+    use mms, only : mms_hydrofrac
 
     implicit none
 
-    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y
+    type(hf_type),intent(in) :: HF
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
 
     real :: Zpim,Zpip, &
             snnp,sttp,szzp,vnFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-            snnm,sttm,szzm,vnFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real,intent(out) :: phip,vtFDp, &
-                             vtFDm
+            snnm,sttm,szzm,vnFDm,snnFDm,sntFDm,sttFDm,szzFDm,vtFDp,vtFDm
+    real,intent(out) :: phip,vtp, &
+                             vtm
 
     ! rotate into local normal and tangential coordinates
 
@@ -1146,6 +1157,17 @@ contains
 
     Zpip = 1d0/Zpp
     Zpim = 1d0/Zpm
+
+    vtm = vtFDm
+    vtp = vtFDp
+    
+    if(HF%use_mms) call mms_velocities(x,y,t,vtm,vtp)
+
+    ! Exact tangential velocity used by mms
+    if(HF%use_mms) then
+        vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
+        vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
+    end if
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
     

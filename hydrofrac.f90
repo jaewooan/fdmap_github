@@ -620,6 +620,7 @@ contains
 
     use mpi_routines2d, only : cartesian
     use fd, only : diff
+    use mms, only : mms_hydrofrac
 
     implicit none
 
@@ -658,11 +659,17 @@ contains
     ! set rates from mass and momentum balance equations,
     ! starting with linearized acoustics (rigid walls)
 
-
-    do i = HF%L%m,HF%L%p
-       HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
-       HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/b(i)
-    end do
+    if(HF%use_mms) then
+        do i = HF%L%m,HF%L%p
+           HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
+           HF%Dp(i)   = HF%Dp(i)-dudx(i)*HF%K0/b(i)
+        end do
+    else
+        do i = HF%L%m,HF%L%p
+           HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
+           HF%Dp(i) = HF%Dp(i)-dudx(i)*HF%K0/b(i)
+        end do
+    end if
     
     ! Apply boundary conditions at the left and right boundary
     call set_bc(HF,t)
@@ -894,6 +901,7 @@ contains
   end subroutine
   
   subroutine bcL_mms(HF,t)
+      use mms, only : mms_hydrofrac
       
     type(hf_type),intent(inout) :: HF
     real,intent(in) :: t
@@ -901,16 +909,17 @@ contains
     real :: uhat,phat
     if (HF%bndm) then ! check if process handles minus boundary
        i = HF%L%mg
-       uhat = 0d0 ! zero fluid velocity at crack tip
-       phat = HF%p(i) - HF%rho0*HF%c0*HF%u(i)
+       phat = mms_hydrofrac(0d0,0d0,t,0,'bcL_phat')
+       uhat = (phat - (hf%p(i) - hf%rho0*hf%c0*hf%u(i)) )/(hf%rho0*hf%c0)
 
-       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATm*(HF%v(:,i)-uhat)
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATm*(HF%u(i)-uhat)
        HF%Dp(i)   = HF%Dp(i)  - HF%SATm*(HF%p(i)-phat)
     end if
 
   end subroutine
 
   subroutine bcR_mms(HF,t)
+    use mms, only : mms_hydrofrac
     
     type(hf_type),intent(inout) :: HF
     real,intent(in) :: t
@@ -919,10 +928,10 @@ contains
 
     if (HF%bndp) then ! check if process handles plus  boundary
        i = HF%L%pg
-       uhat = 0d0 ! zero fluid velocity at crack tip
-       phat = HF%p(i) + HF%rho0*HF%c0*HF%u(i) ! set by preserving characteristic variable into fluid
+       phat = mms_hydrofrac(0d0,0d0,t,0,'bcR_phat')
+       uhat = (HF%p(i)+HF%rho0*HF%c0*HF%u(i) - phat)/(HF%rho0*HF%c0)
 
-       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATp*(HF%v(:,i)-uhat)
+       HF%Dv(:,i) = HF%Dv(:,i)- HF%SATp*(HF%u(i)-uhat)
        HF%Dp(i)   = HF%Dp(i)  - HF%SATp*(HF%p(i)-phat)
     end if
 
@@ -1007,7 +1016,7 @@ contains
   end subroutine
 
   subroutine fluid_stresses(HF,i,x,y,t,p,taum,taup)
-
+    use mms, only: mms_hydrofrac
     implicit none
 
     type(HF_type),intent(in) :: HF
@@ -1048,6 +1057,11 @@ contains
     end if
 
     if(HF%use_mms) call mms_stresses(x,y,t,taum,taup)
+    if(HF%use_mms) p = mms_hydrofrac(x,y,t,0,'p')
+    if(HF%use_mms) then
+     taum = mms_hydrofrac(x,y,t,0,'sxy')
+     taup = mms_hydrofrac(x,y,t,0,'sxy')
+    end if
 
 
   end subroutine fluid_stresses
@@ -1268,7 +1282,7 @@ contains
 
       implicit none
 
-      real,intent(out),dimension(:) :: Hw
+      real,intent(inout),dimension(:) :: Hw
       integer :: n
 
 
