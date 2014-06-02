@@ -930,6 +930,8 @@ contains
        i = HF%L%pg
        phat = mms_hydrofrac(0d0,0d0,t,0,'bcR_phat')
        uhat = (HF%p(i)+HF%rho0*HF%c0*HF%u(i) - phat)/(HF%rho0*HF%c0)
+       !phat = mms_hydrofrac(0d0,0d0,t,0,'bcR_phat')
+       !uhat = (HF%p(i)+HF%rho0*HF%c0*HF%u(i) - phat)/(HF%rho0*HF%c0)
 
        HF%Dv(:,i) = HF%Dv(:,i)- HF%SATp*(HF%u(i)-uhat)
        HF%Dp(i)   = HF%Dp(i)  - HF%SATp*(HF%p(i)-phat)
@@ -1057,10 +1059,10 @@ contains
     end if
 
     if(HF%use_mms) call mms_stresses(x,y,t,taum,taup)
-    if(HF%use_mms) p = mms_hydrofrac(x,y,t,0,'p')
+    !if(HF%use_mms) p = mms_hydrofrac(x,y,t,0,'p')
     if(HF%use_mms) then
-     taum = mms_hydrofrac(x,y,t,0,'sxy')
-     taup = mms_hydrofrac(x,y,t,0,'sxy')
+    ! taum = mms_hydrofrac(x,y,t,0,'sxy') + 1d-3
+    ! taup = mms_hydrofrac(x,y,t,0,'sxy') - 1d-3
     end if
 
 
@@ -1416,7 +1418,7 @@ contains
   end function
 
   ! Differentiate a vector u on plus boundary (used by penalty terms)
-  pure function diff_bnd_p(u,fd2) result(v)
+  function diff_bnd_p(u,fd2) result(v)
 
 
       implicit none
@@ -1427,6 +1429,7 @@ contains
       integer :: n
 
       n = size(u,1)
+
 
       v = dot_product(u((n-fd2%nD1+1):n),fd2%D1R)
 
@@ -1510,7 +1513,7 @@ contains
 
     allocate(fd2%DI(fd2%mI:fd2%pI))
     allocate(fd2%DL (0:fd2%nbnd-1,0:fd2%nbst-1),fd2%DR (-(fd2%nbnd-1):0,-(fd2%nbst-1):0))
-    allocate(fd2%D1L(fd2%nbst),fd2%D1R(fd2%nbst))
+    allocate(fd2%D1L(fd2%nD1),fd2%D1R(fd2%nD1))
     allocate(fd2%HLi(fd2%nbst),fd2%HRi(fd2%nbst))
 
     select case(FDmethod)

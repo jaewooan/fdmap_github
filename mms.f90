@@ -554,8 +554,7 @@ contains
     real :: p,v,u
     real :: I_w,I_vtp,I_vtm,I_taum,I_taup,s_p,s_v, &
             vtm,vtp,&
-            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat, &
-            dpdx
+            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat
 
 
     ! MMS using displacement field:
@@ -610,16 +609,16 @@ M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k
 
 ! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
-v =  w*cos(k*x)*cos(t*w)
-u =  w*cos(k*x)*cos(t*w)
+v =  B*w*sin(pi*(-wm0 + y)/(-wm0 + wp0))*cos(k*x)*cos(t*w)
+u =  2*B*w*cos(k*x)*cos(t*w)/pi
 
 ! Forcing functions
 
 ! Boundary conditions
 
- bcL_uhat =  w*cos(k*xL)*cos(t*w)
+ bcL_uhat =  2*B*w*cos(k*xL)*cos(t*w)/pi
  bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
- bcR_uhat =  w*cos(k*xR)*cos(t*w)
+ bcR_uhat =  2*B*w*cos(k*xR)*cos(t*w)/pi
  bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
 
 ! Interface conditions
@@ -628,25 +627,27 @@ u =  w*cos(k*x)*cos(t*w)
 I_w =  0
 ! Tangential velocity
 ! v - vtm = I_vtm
-I_vtm =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
-I_vtp =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+I_vtm =  -A*w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w)
 ! Tractions
-I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w)
-I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w)
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) - pi*B*mu*w*cos(k*x)*cos(t*w)/(-wm0&
++ wp0)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) + pi*B*mu*w*cos(k*x)*cos(t*w)/(-wm0&
++ wp0)
 
 ! Governing equations
 
 ! Mass balance
-s_p =  k*w*(1.0*A*lambda - K0)*sin(k*x)*cos(t*w)
+s_p =  k*w*(1.0*pi*A*lambda - 2*B*K0)*sin(k*x)*cos(t*w)/pi
 ! Momentum balance
-s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 - w**2*sin(t*w)*cos(k*x)
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(-wm0&
++ y)/(-wm0 + wp0))*cos(k*x)*cos(t*w)/(rho0*(-wm0 + wp0)**2) - B*w**2*sin(t*w)*sin(pi*(-wm0&
++ y)/(-wm0 + wp0))*cos(k*x)
 
 ! Exact interface conditions
-vtm =  w*cos(k*x)*cos(t*w)
-vtp =  w*cos(k*x)*cos(t*w)
+vtm =  0
+vtp =  0
 
-! Other
-dpdx =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)
 
 
 
@@ -758,9 +759,6 @@ dpdx =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)
             F = vtm
             return
         end select
-    case('dpdx')
-        F = dpdx
-        return
     end select
 
     F = 0d0
