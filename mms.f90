@@ -568,6 +568,8 @@ contains
     
     ! Fracture width and crack tips
     real :: wm0 = -1.0d0, wp0 = 1.0d0, xL = -5d0, xR = 5d0 
+
+    character(6) :: hf_profile = 'planar'
     
     cs = 3d0
     cp = 5d0
@@ -609,7 +611,8 @@ M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k
 + lambda*(1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
 
 ! Fluid (planar case)
-
+select case(hf_profile)
+case('planar')
 ! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
 v =  B*w*sin(pi*(-wm0 + y)/(-wm0 + wp0))*cos(k*x)*cos(t*w)
@@ -652,6 +655,7 @@ vtm =  0
 vtp =  0
 
 ! Fluid (non-planar case)
+case('non-planar')
 ! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
 v =  B*w*sin(pi*(2*B + 2*h*sin(k*x) + y)/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
@@ -695,6 +699,7 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(2*B&
 ! Exact interface conditions
 vtm =  B*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
 vtp =  0
+end select
 
 
 
@@ -779,7 +784,7 @@ vtp =  0
             return
         end select
     ! Forcing function for interface conditions
-    case('I_w','I_vm','I_vp','I_taum','I_taup')
+    case('I_w','I_vtm','I_vtp','I_taum','I_taup')
         select case(field)
         case('I_w')
             F = I_w

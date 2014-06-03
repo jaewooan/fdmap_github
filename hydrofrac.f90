@@ -79,7 +79,8 @@ module hydrofrac
      h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
      bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
      character(256) :: bcL,bcR
-     real,dimension(:),allocatable :: wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai
+     real,dimension(:),allocatable :: &
+     wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai,y
      real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
      type(fd2_type) :: fd2
@@ -281,7 +282,8 @@ contains
          HF%Hw(HF%n), &
          HF%hy(HF%L%mb:HF%L%pb), &
          HF%SATyp(4),HF%SATym(4), &
-         HF%dydetai(HF%n)  )
+         HF%dydetai(HF%n), &
+         HF%y(HF%n) )
 
     HF%wm0 = 1d40
     HF%wp0 = 1d40
@@ -296,6 +298,7 @@ contains
     HF%Dv  = 1d40
     HF%Dp  = 1d40
     HF%dydetai = 1d40
+    HF%y = 1d40
 
     ! initial conditions on wall position, velocity, and pressure perturbation
     ! (spatially uniform values can be set from input file parameters)
@@ -455,6 +458,7 @@ contains
      call MPI_File_open(comm,var_file,MPI_MODE_RDONLY, &
               MPI_INFO_NULL,fh%fh,ierr)
      call read_file_distributed(fh,HF%dydetai(1:HF%n))
+     call read_file_distributed(fh,HF%y(1:HF%n))
      call close_file_distributed(fh)
 
 
@@ -515,6 +519,7 @@ contains
     if (allocated(HF%SATyp )) deallocate(HF%SATyp )
     if (allocated(HF%SATym )) deallocate(HF%SATym )
     if (allocated(HF%dydetai )) deallocate(HF%dydetai)
+    if (allocated(HF%y )) deallocate(HF%y)
     if (allocated(HF%fd2%D2 )) deallocate(HF%fd2%D2)
     if (allocated(HF%fd2%DI )) deallocate(HF%fd2%DI)
     if (allocated(HF%fd2%DmI )) deallocate(HF%fd2%DmI)
@@ -958,14 +963,30 @@ contains
 
       t = 0d0
 
-      ! Init mms solution on equidistant grid
       do i=m,p
-        do j=1,HF%n
-            y_ = HF%wm0(i) + HF%hy(i)*(j-1)
-            HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
-        end do
             HF%p(i) = mms_hydrofrac(x(i),0d0,t,0,'p')
       end do
+      ! Init MMS solution on equidistant grid
+      if(.not. HF%variable_grid_spacing) then
+        do i=m,p
+          do j=1,HF%n
+              y_ = HF%wm0(i) + HF%hy(i)*(j-1)
+              HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
+              print *,HF%v(j,i)
+          end do
+        end do
+      end if
+
+      ! Init MMS solution on curvilinear grid
+      if(HF%variable_grid_spacing) then
+        do i=m,p
+          do j=1,HF%n
+              y_ = HF%wm0(i) + (HF%wp0(i) - HF%wm0(i) )*HF%y(i)
+              HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
+          end do
+        end do
+      end if
+
 
   end subroutine
 
