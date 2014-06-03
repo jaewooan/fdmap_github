@@ -550,7 +550,7 @@ contains
     real :: syy_t,syy_x,syy_y
     real :: sxy_t,sxy_x,sxy_y
     real :: sxx_t,sxx_x,sxx_y
-    real :: w,k,A,B
+    real :: w,k,A,B,h,kw
     real :: p,v,u
     real :: I_w,I_vtp,I_vtm,I_taum,I_taup,s_p,s_v, &
             vtm,vtp,&
@@ -586,6 +586,9 @@ contains
     A = 2d0*pi/(lambda)   ! amplitude
     B = 1d0 ! Fluid amplitude
 
+    ! Non-planar hydraulic fracture profile
+    h = 0.5d0 ! Wall perturbation amplitude
+    kw = 2d0*pi*2d0 ! Wavenumber
 ! Solid
 
 ! Velocities:
@@ -605,7 +608,7 @@ M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k
 + 2*G*(0.5*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 0.5*A*k**2*sin(t*w)*cos(k*x)*cos(k*y))&
 + lambda*(1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
 
-! Fluid
+! Fluid (planar case)
 
 ! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
@@ -648,6 +651,50 @@ s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(-wm0&
 vtm =  0
 vtp =  0
 
+! Fluid (non-planar case)
+! Solutions
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  B*w*sin(pi*(2*B + 2*h*sin(k*x) + y)/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
+u =  9*B*w*cos(k*x)*cos(t*w)/(4*pi)
+
+! Forcing functions
+
+! Boundary conditions
+
+ bcL_uhat =  9*B*w*cos(k*xL)*cos(t*w)/(4*pi)
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  9*B*w*cos(k*xR)*cos(t*w)/(4*pi)
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
+! Interface conditions
+
+! Normal velocity
+I_w =  -B*h*k*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)**2*cos(t*w)
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w) + B*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) + 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
+- pi*B*mu*w*cos(k*x)*cos(t*w)*cos(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))/(3*B&
++ 3*h*sin(k*x))
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) - 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
++ pi*B*mu*w*cos(k*x)*cos(t*w)/(3*B + 3*h*sin(k*x))
+
+! Governing equations
+
+! Mass balance
+s_p =  k*w*(4*pi*A*lambda*(B + h*sin(k*x))*sin(k*x) - sqrt(3d0)*pi*B*K0*h*cos(k*x)**2&
++ 9*B*K0*(-B*sin(k*x) - 2*h*sin(k*x)**2 + h))*cos(t*w)/(4*pi*(B + h*sin(k*x)))
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(2*B&
++ 2*h*sin(k*x) + y)/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)/(rho0*(3*B&
++ 3*h*sin(k*x))**2) - B*w**2*sin(t*w)*sin(pi*(2*B + 2*h*sin(k*x) + y)/(3*B&
++ 3*h*sin(k*x)))*cos(k*x)
+
+! Exact interface conditions
+vtm =  B*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
+vtp =  0
 
 
 
