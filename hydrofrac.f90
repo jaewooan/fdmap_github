@@ -654,20 +654,32 @@ contains
 
     ! SBP differentiation of velocity and pressure
     ! (this could certainly be improved for compatibility with external mesh)
+    
+    !if(HF%use_mms) then
+    !    do i = HF%L%mb,HF%L%pb
+    !        HF%p(i) = mms_hydrofrac(x(i),0d0,t,0,'p')
+    !    end do
+    !end if
 
     b = HF%wp0 - HF%wm0
     call diff(HF%L,HF%u*b,dudx)
     call diff(HF%L,HF%p,dpdx)
     dudx = dudx/HF%h
     dpdx = dpdx/HF%h
+    
+    !if(HF%use_mms) then
+    !    do i = HF%L%m,HF%L%p
+    !        dpdx(i) = mms_hydrofrac(x(i),0d0,t,0,'dpdx')
+    !    end do
+    !end if
 
     ! set rates from mass and momentum balance equations,
     ! starting with linearized acoustics (rigid walls)
 
     if(HF%use_mms) then
         do i = HF%L%m,HF%L%p
-           HF%Dv(:,i) = HF%Dv(:,i)-dpdx(i)/HF%rho0
-           HF%Dp(i)   = HF%Dp(i)-dudx(i)*HF%K0/b(i)
+           HF%Dv(:,i) = HF%Dv(:,i)- dpdx(i)/HF%rho0
+           HF%Dp(i)   = HF%Dp(i)-  dudx(i)*HF%K0/b(i)
         end do
     else
         do i = HF%L%m,HF%L%p
@@ -692,8 +704,10 @@ contains
 
 
     call set_rates_viscous(HF,m,p,vtm,vtp)
-
     
+    ! Use mms
+    if(HF%use_mms) call mms_source_terms(HF,m,p,x,y,t)
+
     if (.not. HF%coupled) return
 
 
@@ -718,8 +732,6 @@ contains
         end if
     end if
     
-    ! Use mms
-    if(HF%use_mms) call mms_source_terms(HF,m,p,x,y,t)
 
     ! TODO: Implement this properly
     if (.not. HF%linearized_walls) then
@@ -972,7 +984,6 @@ contains
           do j=1,HF%n
               y_ = HF%wm0(i) + HF%hy(i)*(j-1)
               HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
-              print *,HF%v(j,i)
           end do
         end do
       end if
@@ -981,7 +992,7 @@ contains
       if(HF%variable_grid_spacing) then
         do i=m,p
           do j=1,HF%n
-              y_ = HF%wm0(i) + (HF%wp0(i) - HF%wm0(i) )*HF%y(i)
+              y_ = HF%wm0(i) + (HF%wp0(i) - HF%wm0(i) )*HF%y(j)
               HF%v(j,i) = mms_hydrofrac(x(i),y_,t,0,'v')
           end do
         end do
@@ -1081,10 +1092,10 @@ contains
 
     if(HF%use_mms) call mms_stresses(x,y,t,taum,taup)
     !if(HF%use_mms) p = mms_hydrofrac(x,y,t,0,'p')
-    if(HF%use_mms) then
-    ! taum = mms_hydrofrac(x,y,t,0,'sxy') + 1d-3
-    ! taup = mms_hydrofrac(x,y,t,0,'sxy') - 1d-3
-    end if
+    !if(HF%use_mms) then
+    ! taum = mms_hydrofrac(x,y,t,0,'sxy')
+    ! taup = mms_hydrofrac(x,y,t,0,'sxy')
+    !end if
 
 
   end subroutine fluid_stresses
@@ -1342,7 +1353,8 @@ contains
           HF%u(i) = HF%u(i) + dot_product(HF%v(:,i),HF%Hw)
        end do
       end if
-       HF%u = HF%u/(HF%n - 1)
+
+      HF%u = HF%u/(HF%n - 1)
 
   end subroutine
   
@@ -1376,7 +1388,7 @@ contains
          ! Penalize v using v-hat = u_dot-hat
          ! Two penalties are applied:  
          ! sigma1*(v - vhat) + sigma2*D^T*(v - vhat)
-         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2)*HF%fd2%H00i*(HF%v(1,i) -vtm(i))/HF%hy(i)
+         HF%Dv(1,i) = HF%Dv(1,i) + HF%SATym(2)*HF%fd2%H00i*(HF%v(1,i) - vtm(i))/HF%hy(i)
          gm = HF%SATym(3)*(HF%v(1,i) - vtm(i))/HF%hy(i)**2
          call diff_T_bnd_m(HF%Dv(:,i),gm,HF%fd2)
 
@@ -1470,7 +1482,7 @@ contains
 
       n = size(Dv,1)
       
-      Dv(1:fd2%nD1) = Dv(1:fd2%nD1) + fd2%HLi*fd2%D1L*g
+      Dv(1:fd2%nD1) = Dv(1:fd2%nD1) + fd2%HLi(1:fd2%nD1)*fd2%D1L(1:fd2%nD1)*g
 
   end subroutine
 
@@ -1488,7 +1500,8 @@ contains
 
       n = size(Dv,1)
       
-      Dv((n-fd2%nD1+1):n) = Dv((n-fd2%nD1+1):n) + fd2%HRi*fd2%D1R*g
+      Dv((n-fd2%nD1+1):n) = Dv((n-fd2%nD1+1):n) + &
+      fd2%HRi(1:fd2%nD1)*fd2%D1R(1:fd2%nD1)*g
 
   end subroutine
   
@@ -1503,7 +1516,7 @@ contains
       character(*),intent(in) :: FDmethod
 
       integer :: i
-      type(fd2_type), intent(out) :: fd2
+      type(fd2_type), intent(inout) :: fd2
 
 
       select case(FDmethod)
@@ -1714,7 +1727,6 @@ contains
 
       ! The D2 matrix with variable coefficients is
       ! D2 = HI*(-M + DS)
-      
       select case(HF%fd2%FDmethod)
       case('SBP4')
       call init_fd2var4_R(HF%fd2%D2,HF%dydetai,n)
@@ -1725,7 +1737,6 @@ contains
       case('SBP2')
           call error('SBP2 not yet implemented!','init_fd2var_full') 
       end select
-      if(debug) call write_matrix(HF%fd2%D2,'debug/M.txt')
 
       ! Computes: -Hi*M
       HF%fd2%D2 = -HF%fd2%D2           
@@ -1858,11 +1869,11 @@ subroutine write_matrix(A,file_name)
 
       real,dimension(:,:),intent(in) :: A
       character(*),intent(in) :: file_name
-      integer :: i,N
+      integer :: i,j,N
       N = size(A,1)
 open(unit=2, file=file_name, ACTION="write", STATUS="replace")
 do i=1,N
-  write(2,*) real( A(i,:) ) 
+    write(2,"(100g15.5)") ( A(i,j), j=1,n )
 end do
 close(2)
 
@@ -1872,7 +1883,7 @@ subroutine init_fd2var4_R(R,c,m)
 
       implicit none
 
-      real,dimension(:,:),intent(out) :: R
+      real,dimension(:,:),intent(inout) :: R
       real,dimension(:),intent(in),allocatable :: c
       integer,intent(in) :: m
 
@@ -2388,7 +2399,7 @@ c(m-1) ,&
 
       implicit none
 
-      real,dimension(:,:),intent(out) :: R
+      real,dimension(:,:),intent(inout) :: R
       real,dimension(:),intent(in),allocatable :: c
       integer,intent(in) :: m
 
