@@ -219,7 +219,19 @@ contains
     ! MMS
     HF%use_mms = use_mms
 
+    ! Geometry
+    HF%slope = .false.
+    HF%variable_grid_spacing = .false.
 
+    ! Geometry file 
+    if (geom_file /= '' ) then
+         HF%slope = .true.
+    end if
+
+    ! Variable grid spacing file
+    if (var_file /= '' ) then
+      HF%variable_grid_spacing = .true.
+    end if
 
 
     ! output hydraulic fracture parameters
@@ -251,8 +263,30 @@ contains
        call write_matlab(echo,'bcRA',HF%bcRA,HFstr)
        call write_matlab(echo,'bcRomega',HF%bcRomega,HFstr)
 
+       ! Geometry
+       call write_matlab(echo,'custom_hf_profile',HF%slope,HFstr)
+       call write_matlab(echo,'variable_grid_spacing',HF%variable_grid_spacing,HFstr)
+
        ! MMS
        call write_matlab(echo,'use_mms',HF%use_mms,HFstr)
+
+       ! Geometry file 
+       if (geom_file /= '' ) then
+         call write_matlab(echo,'geom_file',trim(geom_file),HFstr)
+            HF%slope = .true.
+       end if
+
+       ! Variable grid spacing file
+       if (var_file /= '' ) then
+         call write_matlab(echo,'var_file',trim(var_file),HFstr)
+            HF%slope = .true.
+         HF%variable_grid_spacing = .true.
+       end if
+
+       ! Initial conditions file
+       if (initial_conds_file /= '' ) then
+         call write_matlab(echo,'initial_conds_file',initial_conds_file,HFstr)
+       end if
 
     end if
 
@@ -316,34 +350,24 @@ contains
      ! Load non planar profiles
 
      if (geom_file /= '' ) then
-
         allocate(HF%dwm0dx(HF%L%m:HF%L%p),HF%dwp0dx(HF%L%m:HF%L%p))
 
+        HF%slope = .true.
         ! both sides read file (so process may read file twice)
         if (process_m) call read_hydrofrac_geom(HF,geom_file,comm_m,array)
         if (process_p) call read_hydrofrac_geom(HF,geom_file,comm_p,array)
 
-        HF%slope = .true.
-        
-        if (is_master) then
-          call write_matlab(echo,'geom_file',geom_file,HFstr)
-          call write_matlab(echo,'slope',HF%slope,HFstr)
-        end if
 
     end if
 
     ! Load grid points with variable grid spacing
     if (var_file /= '' ) then
 
+        HF%variable_grid_spacing = .true.
         ! both sides read file (so process may read file twice)
         if (process_m) call read_hydrofrac_var_grid(HF,var_file,comm_m)
         if (process_p) call read_hydrofrac_var_grid(HF,var_file,comm_p)
 
-        HF%variable_grid_spacing = .true.
-
-        if (is_master) then
-          call write_matlab(echo,'var_file',var_file,HFstr)
-        end if
     end if
 
     ! override uniform initial conditions with those from file, if desired
@@ -354,11 +378,6 @@ contains
         if (process_p) call read_hydrofrac_initial_conds(HF,initial_conds_file,comm_p,array)
      end if
 
-        if (is_master) then
-          call &
-          write_matlab(echo,'variable_grid_spacing',HF%variable_grid_spacing,HFstr)
-          call write_matlab(echo,'custom_hf_profile',HF%slope,HFstr)
-        end if
     ! current (=initial) wall positions
 
     HF%wm = HF%wm0
