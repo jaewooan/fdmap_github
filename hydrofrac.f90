@@ -55,10 +55,14 @@ module hydrofrac
   ! SATYM, SATYP = SAT penalty terms used by viscous terms 
   ! DYDETA = Gradient for variable gridspacing in the y-direction
   ! L = limits type (indices for FD operations)
+  ! nsource = number of sources
   ! XSOURCE,YSOURCE = source position
   ! TSOURCE = source duration
+  ! T0SOURCE = source start time
+  ! TW0SOURCE = source start time interval
   ! ASOURCE = source amplitude
   ! WSOURCE = source width (in space)
+  ! Lsource = length which multiple sources occupy
   ! bcL/bcR = boundary conditions on left and right boundary (sin_p for
   ! oscillatory pressure input) (zero_u for no velocity (default))
   ! bcLA = Amplitude
@@ -72,15 +76,16 @@ module hydrofrac
   type :: hf_type
      logical :: use_HF,coupled,linearized_walls,source_term,operator_splitting,bndm,bndp,inviscid,slope
      logical :: banded_storage,variable_grid_spacing,use_mms
-     integer :: n
+     integer :: n,nsource
      character(1) :: direction
      real :: &
      rho0,K0,mu,c0,&
-     h,SATm,SATp,xsource,ysource,tsource,Asource,wsource, &
+     h,SATm,SATp,xsource,ysource,tsource,Asource,wsource,Lsource,tw0source,t0source, &
      bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
-     character(256) :: bcL,bcR
+     character(256) :: bcL,bcR,distsource
      real,dimension(:),allocatable :: &
-     wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai,y
+     wm,wp,wm0,wp0,dwm0dx,dwp0dx,u,p,Du,Dp,Dwm,Dwp,Hw,hy,SATyp,SATym,dydetai,y,&
+     rxsource,rtsource
      real,dimension(:,:),allocatable :: v,Dv
      type(limits) :: L
      type(fd2_type) :: fd2
@@ -112,14 +117,16 @@ contains
 
     logical :: coupled,linearized_walls,source_term,operator_splitting, &
                inviscid,banded_storage,variable_grid_spacing,use_mms
-    integer :: n
-    real :: rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
+    integer :: n,nsource
+    real :: rho0,K0,mu,w0,&
+            xsource,ysource,tsource,Asource,wsource,Lsource,tw0source,t0source, &
             bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend
-    character(256) :: geom_file,initial_conds_file,var_file
+    character(256) :: geom_file,initial_conds_file,var_file,distsource
     character(4) :: FDmethod
     integer,parameter :: nb=3 ! number of additional boundary (ghost) points needed for FD operators
 
-    namelist /hydrofrac_list/ rho0,K0,mu,w0,xsource,ysource,tsource,Asource,wsource, &
+    namelist /hydrofrac_list/ rho0,K0,mu,w0,&
+         nsource,xsource,ysource,tsource,Asource,wsource,Lsource,tw0source,t0source,distsource, &
          n,coupled,linearized_walls,source_term,operator_splitting,geom_file,initial_conds_file, &
          inviscid,FDmethod,bcL,bcR,bcLA,bcLomega,bcLphi,bcRA,bcRomega,bcRphi,bcLtend,bcRtend,&
          banded_storage,var_file, &
@@ -131,10 +138,15 @@ contains
     K0 = 1d40
     w0 = 0d0
     mu = 0d0
+    distsource = 'equidistant'
+    nsource = 1
     xsource = 0d0
     ysource = 0d0
     tsource = 1d0
+    t0source = 0d0
+    tw0source = 0d0
     Asource = 1d0
+    Lsource = 0d0
     wsource = 1d0
     n = 1
     coupled = .true.
@@ -189,8 +201,13 @@ contains
     HF%inviscid =  inviscid
     HF%source_term = source_term
     HF%xsource = xsource
+    HF%nsource = nsource
     HF%ysource = ysource
+    HF%Lsource = Lsource
     HF%tsource = tsource
+    HF%t0source = t0source
+    HF%tw0source = tw0source
+    HF%distsource = distsource
     HF%Asource = Asource
     HF%wsource = wsource
     HF%n = ceiling(dble(n-1)*refine)+1
@@ -233,6 +250,8 @@ contains
       HF%variable_grid_spacing = .true.
     end if
 
+    ! Initialize source terms that use random distributions
+    call init_source_terms(HF)
 
     ! output hydraulic fracture parameters
     
@@ -248,9 +267,13 @@ contains
        call write_matlab(echo,'inviscid',HF%inviscid,HFstr)
        call write_matlab(echo,'source_term',HF%source_term,HFstr)
        if (HF%source_term) then
+          call write_matlab(echo,'nsource',HF%nsource,HFstr)
           call write_matlab(echo,'xsource',HF%xsource,HFstr)
           call write_matlab(echo,'ysource',HF%ysource,HFstr)
           call write_matlab(echo,'tsource',HF%tsource,HFstr)
+          call write_matlab(echo,'t0source',HF%t0source,HFstr)
+          call write_matlab(echo,'tw0source',HF%tw0source,HFstr)
+          call write_matlab(echo,'Lsource',HF%Lsource,HFstr)
           call write_matlab(echo,'Asource',HF%Asource,HFstr)
           call write_matlab(echo,'wsource',HF%wsource,HFstr)
        end if
@@ -528,6 +551,8 @@ contains
     if (allocated(HF%u  )) deallocate(HF%u  )
     if (allocated(HF%v  )) deallocate(HF%v  )
     if (allocated(HF%p  )) deallocate(HF%p  )
+    if (allocated(HF%rxsource  )) deallocate(HF%rxsource  )
+    if (allocated(HF%rtsource  )) deallocate(HF%rtsource  )
     if (allocated(HF%Dwm)) deallocate(HF%Dwm)
     if (allocated(HF%Dwp)) deallocate(HF%Dwp)
     if (allocated(HF%Du )) deallocate(HF%Du )
@@ -711,14 +736,8 @@ contains
     call set_bc(HF,t)
 
     ! and source terms (explosion source only appears in mass balance)
+    call set_source_terms(HF,i,x,y,t)
 
-    if (HF%source_term) then
-       do i = HF%L%m,HF%L%p
-          HF%Dp(i) = HF%Dp(i)+HF%Asource* &
-               exp(-0.5d0*((x(i)-HF%xsource)**2+(y(i)-HF%ysource)**2)/HF%wsource**2)* &
-               (t/HF%tsource)*exp(-t/HF%tsource)
-       end do
-    end if
 
 
 
@@ -770,6 +789,186 @@ contains
     deallocate(dudx,dpdx,b)
 
   end subroutine set_rates_hydrofrac
+    
+  subroutine init_source_terms(HF)
+
+      implicit none
+
+      type(hf_type),intent(inout) :: HF
+      
+      if(.not. HF%source_term) return
+
+      select case(HF%distsource)
+      case('uniform')
+      allocate(HF%rxsource(HF%nsource),HF%rtsource(HF%nsource))
+      !todo: each process gets a different seed which is bad
+      ! for now let the random numbers be the same each time
+      !call init_random_seed()
+      call random_number(HF%rxsource)
+      call random_number(HF%rtsource)
+      end select
+
+  end subroutine init_source_terms
+  
+  subroutine init_random_seed()
+            use iso_fortran_env, only: int64
+            implicit none
+            integer, allocatable :: seed(:)
+            integer :: i, n, un, istat, dt(8), pid
+            integer(int64) :: t
+          
+            call random_seed(size = n)
+            allocate(seed(n))
+            ! First try if the OS provides a random number generator
+            open(newunit=un, file="/dev/urandom", access="stream", &
+                 form="unformatted", action="read", status="old", iostat=istat)
+            if (istat == 0) then
+               read(un) seed
+               close(un)
+            else
+               ! Fallback to XOR:ing the current time and pid. The PID is
+               ! useful in case one launches multiple instances of the same
+               ! program in parallel.
+               call system_clock(t)
+               if (t == 0) then
+                  call date_and_time(values=dt)
+                  t = (dt(1) - 1970) * 365_int64 * 24 * 60 * 60 * 1000 &
+                       + dt(2) * 31_int64 * 24 * 60 * 60 * 1000 &
+                       + dt(3) * 24_int64 * 60 * 60 * 1000 &
+                       + dt(5) * 60 * 60 * 1000 &
+                       + dt(6) * 60 * 1000 + dt(7) * 1000 &
+                       + dt(8)
+               end if
+               pid = getpid()
+               t = ieor(t, int(pid, kind(t)))
+               do i = 1, n
+                  seed(i) = lcg(t)
+               end do
+            end if
+            call random_seed(put=seed)
+          contains
+            ! This simple PRNG might not be good enough for real work, but is
+            ! sufficient for seeding a better PRNG.
+            function lcg(s)
+              integer :: lcg
+              integer(int64) :: s
+              if (s == 0) then
+                 s = 104729
+              else
+                 s = mod(s, 4294967296_int64)
+              end if
+              s = mod(s * 279470273_int64, 4294967291_int64)
+              lcg = int(mod(s, int(huge(0), int64)), kind(0))
+            end function lcg
+  end subroutine init_random_seed
+
+  subroutine set_source_terms(HF,i,x,y,t)
+
+      use io, only: error
+      implicit none
+
+      type(hf_type),intent(inout) :: HF
+      integer,intent(in) :: i
+      real,dimension(HF%L%m:HF%L%p),intent(in) :: x,y
+      real,intent(in) :: t
+
+      if(.not. HF%source_term) return
+
+      select case(HF%distsource)
+      case('equidistant')
+          call set_equidistant_source_terms(HF,i,x,y,t)
+      case('uniform')
+          call set_uniform_source_terms(HF,i,x,y,t)
+      case default
+          call error('Invalid type of source term distribution', &
+                    'hydrofrac:: set_source_terms')
+      end select
+
+  end subroutine set_source_terms
+
+  subroutine set_equidistant_source_terms(HF,i,x,y,t)
+
+      implicit none
+      
+      type(hf_type),intent(inout) :: HF
+      integer,intent(in) :: i
+      real,dimension(HF%L%m:HF%L%p),intent(in) :: x,y
+      real,intent(in) :: t
+
+      real :: x0,y0,dx,dy,x_,y_
+      integer :: j
+
+      ! For now, we always pretend that crack is horizontal
+      ! todo: handle the general case when (x,y) is used
+
+      ! Special case, only one source term
+      if(HF%nsource == 1) then
+      HF%Dp = HF%Dp+HF%Asource*&
+              exp(-0.5d0*((x-HF%xsource)**2+(y-HF%ysource)**2)/HF%wsource**2) &
+              *exp(-0.5d0*(t-HF%t0source)**2/HF%tsource**2)
+          return
+      end if
+
+      ! More than one source term
+      
+      x0 = - HF%Lsource*0.5 + HF%xsource
+      y0 = - HF%Lsource*0.5 + HF%ysource
+      !xn = + HF%Lsource*0.5 + HF%xsource
+      dx = HF%Lsource/(HF%nsource - 1)
+      dy = 0d0
+
+      do j=1,HF%nsource
+        x_ = x0 + dx*(j-1)
+        y_ = 0d0*y0 + dy*(j-1)
+        HF%Dp = HF%Dp+HF%Asource*&
+              exp(-0.5d0*((x-x_)**2+(y-y_)**2)/HF%wsource**2)* &
+              exp(-0.5d0*(t-HF%t0source)**2/HF%tsource**2)
+      end do
+
+  end subroutine set_equidistant_source_terms
+  
+  subroutine set_uniform_source_terms(HF,i,x,y,t)
+
+      implicit none
+      
+      type(hf_type),intent(inout) :: HF
+      integer,intent(in) :: i
+      real,dimension(HF%L%m:HF%L%p),intent(in) :: x,y
+      real,intent(in) :: t
+
+      real :: x0,y0,dx,dy,x_,y_,t0_
+      integer :: j
+      
+      ! Special case, only one source term
+      if(HF%nsource == 1) then
+      HF%Dp = HF%Dp+HF%Asource*&
+              exp(-0.5d0*((x-HF%xsource)**2+(y-HF%ysource)**2)/HF%wsource**2) &
+              *exp(-0.5d0*(t-HF%t0source)**2/HF%tsource**2)
+          return
+      end if
+
+      x0 = - HF%Lsource*0.5 + HF%xsource
+      y0 = - HF%Lsource*0.5 + HF%ysource
+
+      dx = HF%Lsource/(HF%nsource - 1)
+      dy = 0d0
+      
+
+      do j=1,HF%nsource
+        x_ = x0 + HF%Lsource*HF%rxsource(j)
+        t0_ = HF%tw0source*HF%rtsource(j)
+        y_ = 0d0*y0 + dy*(j-1)
+        HF%Dp = HF%Dp+HF%Asource*&
+              exp(-0.5d0*((x-x_)**2+(y-y_)**2)/HF%wsource**2)* &
+              exp(-0.5d0*(t-t0_)**2/HF%tsource**2)
+      end do
+
+
+
+  end subroutine set_uniform_source_terms
+
+
+
 
   subroutine set_bc(HF,t)
 
