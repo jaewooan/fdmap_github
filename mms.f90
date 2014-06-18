@@ -554,7 +554,7 @@ contains
     real :: p,v,u
     real :: I_w,I_vtp,I_vtm,I_taum,I_taup,s_p,s_v, &
             vtm,vtp,&
-            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat
+            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat,dpdx
 
 
     ! MMS using displacement field:
@@ -569,14 +569,16 @@ contains
     ! Fracture width and crack tips
     real :: wm0 = -1.0d0, wp0 = 1.0d0, xL = -5d0, xR = 5d0 
 
-    character(6) :: hf_profile = 'planar'
+    !character(6) :: hf_profile = 'planar'
+    character(10) :: hf_profile = 'non-planar'
+    !character(4) :: hf_profile = 'no-y'
     
     cs = 3d0
     cp = 5d0
     rho = 2.6d0
     K0 = 1d0
     rho0 = 1d0
-    mu = 1d0
+    mu = 1d-2
 
     G = rho*cs**2
     lambda = rho*cp**2 - 2d0*G
@@ -584,7 +586,7 @@ contains
 
     pi = 4d0 * datan(1d0)
     w = 2d0*pi ! omega
-    k = 2d0*pi/5d0 ! wave number
+    k = 2d0*pi/10d0 ! wave number
     A = 2d0*pi/(lambda)   ! amplitude
     B = 1d0 ! Fluid amplitude
 
@@ -658,47 +660,88 @@ vtp =  0
 case('non-planar')
 ! Solutions
 p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
-v =  B*w*sin(pi*(2*B + 2*h*sin(k*x) + y)/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
-u =  9*B*w*cos(k*x)*cos(t*w)/(4*pi)
+v =  B*w*sin(pi*(B + h*sin(k*x) + y)/(2*B + 2*h*sin(k*x)))*cos(k*x)*cos(t*w)
+u =  2*B*w*cos(k*x)*cos(t*w)/pi
 
 ! Forcing functions
 
 ! Boundary conditions
 
- bcL_uhat =  9*B*w*cos(k*xL)*cos(t*w)/(4*pi)
+ bcL_uhat =  2*B*w*cos(k*xL)*cos(t*w)/pi
  bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
- bcR_uhat =  9*B*w*cos(k*xR)*cos(t*w)/(4*pi)
+ bcR_uhat =  2*B*w*cos(k*xR)*cos(t*w)/pi
  bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
 
 ! Interface conditions
 
 ! Normal velocity
-I_w =  -B*h*k*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)**2*cos(t*w)
+I_w =  0
 ! Tangential velocity
 ! v - vtm = I_vtm
-I_vtm =  -A*w*cos(k*x)*cos(t*w) + B*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
+I_vtm =  -A*w*cos(k*x)*cos(t*w)
 I_vtp =  -A*w*cos(k*x)*cos(t*w)
 ! Tractions
 I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) + 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
-- pi*B*mu*w*cos(k*x)*cos(t*w)*cos(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))/(3*B&
-+ 3*h*sin(k*x))
+- pi*B*mu*w*cos(k*x)*cos(t*w)/(2*B + 2*h*sin(k*x))
 I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) - 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
-+ pi*B*mu*w*cos(k*x)*cos(t*w)/(3*B + 3*h*sin(k*x))
++ pi*B*mu*w*cos(k*x)*cos(t*w)/(2*B + 2*h*sin(k*x))
 
 ! Governing equations
 
 ! Mass balance
-s_p =  k*w*(4*pi*A*lambda*(B + h*sin(k*x))*sin(k*x) - sqrt(3d0)*pi*B*K0*h*cos(k*x)**2&
-+ 9*B*K0*(-B*sin(k*x) - 2*h*sin(k*x)**2 + h))*cos(t*w)/(4*pi*(B + h*sin(k*x)))
+s_p =  k*w*(2.0*pi*A*lambda*(B + h*sin(k*x))*sin(k*x) + 4*B*K0*(-B*sin(k*x)&
+- 2*h*sin(k*x)**2 + h))*cos(t*w)/(2*pi*(B + h*sin(k*x)))
 ! Momentum balance
-s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(2*B&
-+ 2*h*sin(k*x) + y)/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)/(rho0*(3*B&
-+ 3*h*sin(k*x))**2) - B*w**2*sin(t*w)*sin(pi*(2*B + 2*h*sin(k*x) + y)/(3*B&
-+ 3*h*sin(k*x)))*cos(k*x)
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(B&
++ h*sin(k*x) + y)/(2*B + 2*h*sin(k*x)))*cos(k*x)*cos(t*w)/(rho0*(2*B&
++ 2*h*sin(k*x))**2) - B*w**2*sin(t*w)*sin(pi*(B + h*sin(k*x) + y)/(2*B&
++ 2*h*sin(k*x)))*cos(k*x)
 
 ! Exact interface conditions
-vtm =  B*w*sin(pi*(B + h*sin(k*x))/(3*B + 3*h*sin(k*x)))*cos(k*x)*cos(t*w)
+vtm =  0
 vtp =  0
+case('no-y')
+! Fluid, constant velocity field in y-dir
+! Solutions
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  w*cos(k*x)*cos(t*w)
+u =  w*cos(k*x)*cos(t*w)
+
+! Forcing functions
+
+! Boundary conditions
+
+ bcL_uhat =  w*cos(k*xL)*cos(t*w)
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  w*cos(k*xR)*cos(t*w)
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
+! Interface conditions
+
+! Normal velocity
+I_w =  0
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w)
+
+! Governing equations
+
+! Mass balance
+s_p =  k*w*(1.0*A*lambda - K0)*sin(k*x)*cos(t*w)
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 - w**2*sin(t*w)*cos(k*x)
+
+! Exact interface conditions
+vtm =  w*cos(k*x)*cos(t*w)
+vtp =  w*cos(k*x)*cos(t*w)
+ 
+! Other
+dpdx =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)
+
 end select
 
 
@@ -804,13 +847,16 @@ end select
         end select
     case('vtm','vtp')
         select case(field)
-        case('vtp')
-            F = vtp
-            return
         case('vtm')
             F = vtm
             return
+        case('vtp')
+            F = vtp
+            return
         end select
+    case('dpdx')
+        F = dpdx
+        return
     end select
 
     F = 0d0

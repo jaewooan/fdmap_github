@@ -1086,10 +1086,10 @@ contains
     if(HF%use_mms) call mms_velocities(x,y,t,vtm,vtp)
 
     ! Exact tangential velocity used by mms
-    if(HF%use_mms) then
-        vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
-        vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
-    end if
+    !if(HF%use_mms) then
+    !    vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
+    !    vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
+    !end if
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
 
@@ -1164,10 +1164,10 @@ contains
     if(HF%use_mms) call mms_velocities(x,y,t,vtm,vtp)
 
     ! Exact tangential velocity used by mms
-    if(HF%use_mms) then
-        vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
-        vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
-    end if
+    !if(HF%use_mms) then
+    !    vtm = mms_hydrofrac(x,0d0,t,0,'vtm')
+    !    vtp = mms_hydrofrac(x,0d0,t,0,'vtp')
+    !end if
 
     ! calculate P-wave stress transfer for use in implicit-explicit time-stepping
     
