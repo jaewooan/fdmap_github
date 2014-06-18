@@ -101,7 +101,7 @@ contains
     use io, only : error
     use grid, only : grid_type,block_grid
     use fields, only : fields_type
-    use mms, only : mms_sin,inplane_fault_mms
+    use mms, only : mms_sin,inplane_fault_mms,mms_hydrofrac
     use material, only : block_material
     use utilities, only : search_binary
     
@@ -199,6 +199,19 @@ contains
              F%DF(i,j,4) = F%DF(i,j,4) + mms_sin(x,y,t,iblock,'s_sxy')
              F%DF(i,j,5) = F%DF(i,j,5) + mms_sin(x,y,t,iblock,'s_syy')
              F%DF(i,j,6) = F%DF(i,j,6) + mms_sin(x,y,t,iblock,'s_szz')
+          end do
+       end do
+    case('mms-hydrofrac')
+       do j = B%my,B%py
+          do i = B%mx,B%px
+             x = G%x(i,j)
+             y = G%y(i,j)
+             F%DF(i,j,1) = F%DF(i,j,1) + mms_hydrofrac(x,y,t,iblock,'s_vx')
+             F%DF(i,j,2) = F%DF(i,j,2) + mms_hydrofrac(x,y,t,iblock,'s_vy')
+             F%DF(i,j,3) = F%DF(i,j,3) + mms_hydrofrac(x,y,t,iblock,'s_sxx')
+             F%DF(i,j,4) = F%DF(i,j,4) + mms_hydrofrac(x,y,t,iblock,'s_sxy')
+             F%DF(i,j,5) = F%DF(i,j,5) + mms_hydrofrac(x,y,t,iblock,'s_syy')
+             F%DF(i,j,6) = F%DF(i,j,6) + mms_hydrofrac(x,y,t,iblock,'s_szz')
           end do
        end do
     case('inplane-fault-mms')
