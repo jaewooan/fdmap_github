@@ -5,6 +5,7 @@ module boundaries
   type :: block_boundaries
      character(24) :: bcL,bcR,bcB,bcT
      real :: rhog ! for tsunami calculations, not ideal place to store this, but easy
+     character(256) :: problem ! might want to change variable name
   end type block_boundaries
 
 
@@ -227,6 +228,7 @@ contains
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use mms, only : mms_sin,inplane_bessel,inplane_fault_mms,mms_hydrofrac
+    use tsunami, only : seafloor_velocity
     use geometry, only : rotate_xy2nt
     use io, only : error
 
