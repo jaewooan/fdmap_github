@@ -1110,10 +1110,10 @@ contains
     type(block_fields),intent(inout) :: BF
     integer,intent(in) :: nU
 
-    if (B%sideL) BF%bndFL%DU = BF%bndFL%DU+BF%bndFL%F(:,1:nU)
-    if (B%sideR) BF%bndFR%DU = BF%bndFR%DU+BF%bndFR%F(:,1:nU)
-    if (B%sideB) BF%bndFB%DU = BF%bndFB%DU+BF%bndFB%F(:,1:nU)
-    if (B%sideT) BF%bndFT%DU = BF%bndFT%DU+BF%bndFT%F(:,1:nU)
+    if (B%sideL) BF%bndFL%DU = BF%bndFL%DU+BF%bndFL%Fhat(:,1:nU)
+    if (B%sideR) BF%bndFR%DU = BF%bndFR%DU+BF%bndFR%Fhat(:,1:nU)
+    if (B%sideB) BF%bndFB%DU = BF%bndFB%DU+BF%bndFB%Fhat(:,1:nU)
+    if (B%sideT) BF%bndFT%DU = BF%bndFT%DU+BF%bndFT%Fhat(:,1:nU)
 
   end subroutine set_rates_boundary
 
