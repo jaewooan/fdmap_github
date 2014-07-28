@@ -307,38 +307,32 @@ contains
        snn = 0.5d0*(snnEX+snnFD+Zp*(vnEX-vnFD))
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
-       call rotate_fields_nt2xy(Fhat,normal,vt,vn,stt,snt,snn,szz)
        
-    case('rigid-0','absorbing-0','free-0','seafloor') 
+    case('rigid-0','absorbing-0','free-0') 
        
        ! apply boundary conditions in local coordinates
        
        select case(bc)
-       case('absorbing','absorbing-0')
+       case('absorbing-0')
           vt  = 0.5d0*( vtFD-Zsi*sntFD)
           snt = 0.5d0*(sntFD-Zs * vtFD)
           vn  = 0.5d0*( vnFD-Zpi*snnFD)
           snn = 0.5d0*(snnFD-Zp * vnFD)
-       case('free','free-0')
+       case('free-0')
           vt  = vtFD-Zsi*sntFD
           snt = 0d0
           vn  = vnFD-Zpi*snnFD
           snn = 0d0
-       case('rigid','rigid-0')
+       case('rigid-0')
           vt  = 0d0
           snt = sntFD-Zs*vtFD
           vn  = 0d0
           snn = snnFD-Zp*vnFD
-       case('seafloor')
-          call seafloor_velocity(x,y,t,vx,vy,problem)
-          call rotate_xy2nt(vx,vy,vt,vn,normal)
-          snt = sntFD-Zs*(vtFD-vt)
-          snn = snnFD-Zp*(vnFD-vn)
        end select
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
 
-    case('rigid','absorbing','free','absorbing-velocity','free-velocity','tsunami') 
+    case('rigid','absorbing','free','absorbing-velocity','free-velocity','tsunami','seafloor') 
        
        ! apply boundary conditions in local coordinates
        
@@ -375,6 +369,11 @@ contains
           call rotate_xy2nt(U(1),U(2),Ut,Un,normal)
           snn = -rhog*Un
           vn  = vnFD-Zpi*(snnFD-snn)
+       case('seafloor')
+          call seafloor_velocity(x,y,t,vx,vy,problem)
+          call rotate_xy2nt(vx,vy,vt,vn,normal)
+          snt = sntFD-Zs*(vtFD-vt)
+          snn = snnFD-Zp*(vnFD-vn)
        end select
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
