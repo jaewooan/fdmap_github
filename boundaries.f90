@@ -27,8 +27,9 @@ contains
     real :: rhog
     character(256) :: str
     character(256) :: Bstr
+    character(256) :: problem
 
-    namelist /boundaries_list/ bcL,bcR,bcB,bcT,rhog
+    namelist /boundaries_list/ bcL,bcR,bcB,bcT,rhog,problem
 
     ! defaults
 
@@ -37,6 +38,7 @@ contains
     bcB = 'none'
     bcT = 'none'
     rhog = 0d0
+    problem = ''
 
     ! read in boundary condition parameters
     
@@ -52,6 +54,7 @@ contains
     B%bcB = bcB
     B%bcT = bcT
     B%rhog = rhog
+    B%problem = problem
 
     ! output boundary condition parameters
 
@@ -62,6 +65,7 @@ contains
        call write_matlab(echo,'bcB',B%bcB,Bstr)
        call write_matlab(echo,'bcT',B%bcT,Bstr)
        if (B%rhog/=0d0) call write_matlab(echo,'rhog',B%rhog,Bstr)
+       if (B%problem/='') call write_matlab(echo,'problem',B%problem,Bstr)
     end if
 
   end subroutine init_boundaries
@@ -85,21 +89,21 @@ contains
     ! q-direction
 
     if (G%nx/=1) then
-       if (G%sideL) call apply_bc_side(G%bndL,F%bndFL,G%my,G%py,B%bcL,B%rhog,mode,t,iblock)
-       if (G%sideR) call apply_bc_side(G%bndR,F%bndFR,G%my,G%py,B%bcR,B%rhog,mode,t,iblock)
+       if (G%sideL) call apply_bc_side(G%bndL,F%bndFL,G%my,G%py,B%bcL,B%rhog,mode,t,iblock,B%problem)
+       if (G%sideR) call apply_bc_side(G%bndR,F%bndFR,G%my,G%py,B%bcR,B%rhog,mode,t,iblock,B%problem)
     end if
 
     ! r-direction
 
     if (G%ny/=1) then
-       if (G%sideB) call apply_bc_side(G%bndB,F%bndFB,G%mx,G%px,B%bcB,B%rhog,mode,t,iblock)
-       if (G%sideT) call apply_bc_side(G%bndT,F%bndFT,G%mx,G%px,B%bcT,B%rhog,mode,t,iblock)
+       if (G%sideB) call apply_bc_side(G%bndB,F%bndFB,G%mx,G%px,B%bcB,B%rhog,mode,t,iblock,B%problem)
+       if (G%sideT) call apply_bc_side(G%bndT,F%bndFT,G%mx,G%px,B%bcT,B%rhog,mode,t,iblock,B%problem)
     end if
 
   end subroutine enforce_boundary_conditions
 
 
-  subroutine apply_bc_side(bndC,bndF,m,p,bc,rhog,mode,t,iblock)
+  subroutine apply_bc_side(bndC,bndF,m,p,bc,rhog,mode,t,iblock,problem)
     
     use geometry, only : curve
     use fields, only : bnd_fields
@@ -109,7 +113,7 @@ contains
     type(curve),intent(in) :: bndC
     type(bnd_fields),intent(inout) :: bndF
     integer,intent(in) :: m,p
-    character(*),intent(in) :: bc
+    character(*),intent(in) :: bc,problem
     real,intent(in) :: rhog,t
     integer,intent(in) :: mode,iblock
 
@@ -119,13 +123,13 @@ contains
 
     do i = m,p
        call set_bc(bndF%Fhat(i,:),bndF%F(i,:),bndF%F0(i,:),bndF%U(i,:),rhog, &
-            bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock)
+            bndC%x(i),bndC%y(i),bndC%n(i,:),bc,bndF%M(i,1:3),mode,t,iblock,problem)
     end do
     
   end subroutine apply_bc_side
 
 
-  subroutine set_bc(Fhat,F,F0,U,rhog,x,y,normal,bc,M,mode,t,iblock)
+  subroutine set_bc(Fhat,F,F0,U,rhog,x,y,normal,bc,M,mode,t,iblock,problem)
 
     implicit none
 
@@ -135,12 +139,12 @@ contains
 
     real,intent(out) :: Fhat(:)
     real,intent(in) :: F(:),F0(:),U(:),rhog,x,y,normal(2),M(3),t
-    character(*),intent(in) :: bc
+    character(*),intent(in) :: bc,problem
     integer,intent(in) :: mode,iblock
 
     select case(mode)
     case(2)
-       call set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock)
+       call set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,M(1),M(2),M(3),x,y,t,iblock,problem)
     case(3)
        call set_bc_mode3(Fhat,F,F0,normal,bc,M(1),x,y,t,iblock)
     end select
@@ -224,7 +228,7 @@ contains
   end subroutine set_bc_mode3
 
 
-  subroutine set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock)
+  subroutine set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock,problem)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use mms, only : mms_sin,inplane_bessel,inplane_fault_mms,mms_hydrofrac
@@ -236,11 +240,11 @@ contains
 
     real,intent(out) :: Fhat(6)
     real,intent(in) :: F(6),F0(6),U(2),rhog,normal(2),Zs,Zp,gamma,x,y,t
-    character(*),intent(in) :: bc
+    character(*),intent(in) :: bc,problem
     integer,intent(in) :: iblock
 
     real :: Zsi,Zpi,vn,vt,snn,snt,stt,szz,vnFD,vtFD,snnFD,sntFD,sttFD,szzFD
-    real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6),Ut,Un
+    real :: vnEX,vtEX,snnEX,sntEX,sttEX,szzEX,FEX(6),Ut,Un,vx,vy
 
     if (Zs==0d0) then
        Zsi = 0d0 ! avoid division by zero for fluid case
@@ -305,7 +309,7 @@ contains
        szz = szzFD-gamma*(snnFD-snn)
        call rotate_fields_nt2xy(Fhat,normal,vt,vn,stt,snt,snn,szz)
        
-    case('rigid-0','absorbing-0','free-0') 
+    case('rigid-0','absorbing-0','free-0','seafloor') 
        
        ! apply boundary conditions in local coordinates
        
@@ -325,6 +329,11 @@ contains
           snt = sntFD-Zs*vtFD
           vn  = 0d0
           snn = snnFD-Zp*vnFD
+       case('seafloor')
+          call seafloor_velocity(x,y,t,vx,vy,problem)
+          call rotate_xy2nt(vx,vy,vt,vn,normal)
+          snt = sntFD-Zs*(vtFD-vt)
+          snn = snnFD-Zp*(vnFD-vn)
        end select
        stt = sttFD-gamma*(snnFD-snn)
        szz = szzFD-gamma*(snnFD-snn)
