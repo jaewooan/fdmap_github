@@ -16,8 +16,8 @@ UNAME = $(shell uname)
 # Mac (using gfortran and openmpi)
 
 ifeq ($(findstring Darwin,$(UNAME)),Darwin)
- F95 = openmpif90 -fdefault-real-8 -fdefault-double-8
- LD = openmpif90
+ F95 = mpif90 -fdefault-real-8 -fdefault-double-8
+ LD = mpif90
  ifeq ($(BUILD),debug)
   F95FLAGS = -g -Wall -Wextra -Wconversion -fbounds-check -fbacktrace \
 	-fimplicit-none -std=f2003
@@ -92,11 +92,11 @@ endif
 # Files
 
 Files = boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
-	erupt.f90 fault.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
-	geometry.f90 grid.f90 io.f90 main.f90 material.f90 \
+	interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
+	geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
 	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \
 	rates.f90 rates_heterogeneous.f90 source.f90 thermpres.f90 \
-	time_step.f90 utilities.f90
+	time_step.f90 tsunami.f90 utilities.f90
 
 IOFiles = io.f90 mpi_routines.f90 mpi_routines2d.f90 testio.f90
 
@@ -135,20 +135,15 @@ notintel:
 .SUFFIXES: .o .f90
 
 # DO NOT DELETE THIS LINE - used by make depend
-boundaries.o: erupt.o fields.o friction.o geometry.o grid.o io.o mms.o
-boundaries.o: mpi_routines.o mpi_routines2d.o thermpres.o
+boundaries.o: fields.o geometry.o grid.o io.o mms.o mpi_routines.o tsunami.o
 
-checkpoint.o: boundaries.o domain.o fields.o io.o mpi_routines.o
+checkpoint.o: domain.o fields.o interfaces.o io.o mpi_routines.o
 
-domain.o: boundaries.o fault.o fd_coeff.o fields.o grid.o io.o material.o
+domain.o: boundaries.o fd_coeff.o fields.o grid.o interfaces.o io.o material.o
 domain.o: mpi_routines.o mpi_routines2d.o source.o utilities.o
 
-energy.o: domain.o fields.o grid.o material.o mpi_routines.o mpi_routines2d.o
-
-erupt.o: fd.o fd_coeff.o io.o mpi_routines.o mpi_routines2d.o utilities.o
-
-fault.o: boundaries.o erupt.o fields.o friction.o geometry.o io.o mms.o
-fault.o: mpi_routines2d.o thermpres.o
+energy.o: domain.o fields.o geometry.o grid.o material.o mpi_routines.o
+energy.o: mpi_routines2d.o
 
 fd.o: fd_coeff.o io.o
 
@@ -163,6 +158,11 @@ geometry.o: io.o
 
 grid.o: fd.o fd_coeff.o geometry.o io.o mpi_routines.o mpi_routines2d.o
 grid.o: utilities.o
+
+hydrofrac.o: fd.o fd_coeff.o io.o mms.o mpi_routines.o mpi_routines2d.o
+
+interfaces.o: fields.o friction.o geometry.o grid.o hydrofrac.o io.o mms.o
+interfaces.o: mpi_routines.o mpi_routines2d.o thermpres.o
 
 io.o: mpi_routines.o
 
@@ -190,9 +190,10 @@ testio.o: io.o mpi_routines.o mpi_routines2d.o
 
 thermpres.o: io.o mpi_routines.o
 
-time_step.o: boundaries.o domain.o energy.o fields.o grid.o io.o material.o
+time_step.o: domain.o energy.o fields.o grid.o interfaces.o io.o material.o
 time_step.o: mpi_routines2d.o output.o plastic.o rates.o rates_heterogeneous.o
 time_step.o: source.o
+
 
 utilities.o: io.o
 

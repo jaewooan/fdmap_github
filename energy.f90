@@ -138,7 +138,7 @@ contains
   end subroutine update_energy
 
 
-  subroutine set_rates_energy(B,BF)
+  subroutine set_rates_energy(B,BF,mode)
 
     use grid, only : block_grid
     use fields, only : block_fields
@@ -149,11 +149,19 @@ contains
     
     type(block_grid),intent(in) :: B
     type(block_fields),intent(inout) :: BF
+    integer,intent(in) :: mode
 
     real :: DE,DEL,DER,DEB,DET,DELRBT(4),DEglobal(4)
     integer :: i,j,ierr
 
     if (B%skip.or.(.not.BF%energy_balance)) return
+
+    ! calculate energy rates on block boundaries
+
+    if (B%sideL) call energy_rates_boundary(B%bndL,BF%bndFL,B%my,B%py,mode)
+    if (B%sideR) call energy_rates_boundary(B%bndR,BF%bndFR,B%my,B%py,mode)
+    if (B%sideB) call energy_rates_boundary(B%bndB,BF%bndFB,B%my,B%py,mode)
+    if (B%sideT) call energy_rates_boundary(B%bndT,BF%bndFT,B%my,B%py,mode)
 
     ! integrate energy flux across boundary: multiply by norm
     ! sum all points held by process, global sum across all processes
@@ -204,6 +212,57 @@ contains
     BF%DE = DEglobal
 
   end subroutine set_rates_energy
+
+
+  subroutine energy_rates_boundary(bndC,bndF,m,p,mode)
+
+    use geometry, only : curve
+    use fields, only : bnd_fields
+
+    implicit none
+    
+    type(curve),intent(in) :: bndC
+    type(bnd_fields),intent(inout) :: bndF
+    integer,intent(in) :: m,p,mode
+
+    integer :: i
+    
+    select case(mode)
+    case(3)
+       do i = m,p
+          ! DE = DE+... (use subroutines below, but will need to rotate fields, etc.)
+          ! use fields bndF%DE(i),bndF%Fhat(i,:),bndF%F(i,:),bndF%F0(i,:),bndC%n(i,:),bndF%M(i,1:3)
+       end do
+    case(2)
+    end select
+
+  end subroutine energy_rates_boundary
+
+
+  subroutine energy_rate_mode3(DE,snz,vz,snzFD,vzFD,Zs,Zsi)
+
+    implicit none
+
+    real,intent(inout) :: DE
+    real,intent(in) :: snz,vz,snzFD,vzFD,Zs,Zsi
+
+    DE = DE+snz*vz-0.25d0*Zsi*((snzFD-snz)+Zs*(vzFD-vz))**2
+
+  end subroutine energy_rate_mode3
+
+  
+  subroutine energy_rate_mode2(DE,snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi)
+    
+    implicit none
+    
+    real,intent(inout) :: DE
+    real,intent(in) :: snt,snn,vt,vn,sntFD,snnFD,vtFD,vnFD,Zs,Zsi,Zp,Zpi
+    
+    DE = DE+snt*vt+vn*snn- &
+         0.25d0*Zsi*((sntFD-snt)+Zs*(vtFD-vt))**2- &
+         0.25d0*Zpi*((snnFD-snn)+Zp*(vnFD-vn))**2
+
+  end subroutine energy_rate_mode2
 
 
 end module energy

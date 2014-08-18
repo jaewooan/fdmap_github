@@ -75,6 +75,7 @@ contains
     use fields, only : exchange_fields,update_fields_peak
     use energy, only : energy_interior,energy_block
     use plastic, only : update_fields_plastic
+    use interfaces, only : update_fields_iface_implicit
     use output, only : output_list,write_output
     use io, only : error
 
@@ -86,7 +87,7 @@ contains
     type(output_list),intent(inout) :: outlist
     logical,intent(in) :: final_step,solid
 
-    integer :: i,stage
+    integer :: i,im,ip,stage
     real :: t0
 
     ! initial time
@@ -105,7 +106,7 @@ contains
        ! also, set rates on interfaces
 
        call prepare_edges(D)
-       call enforce_edge_conditions(D,initialize=.false.)
+       call enforce_edge_conditions(D)
        
        ! set rates (except interfaces)
 
@@ -138,12 +139,22 @@ contains
 
     end do
 
-    ! operator splitting: implicit Euler integration of plasticity
+    ! operator splitting: implicit updates of stiff terms or DAEs
+
+    ! implicit Euler integration of plasticity
        
     do i = 1,D%nblocks
        call update_fields_plastic(D%B(i)%G,D%G,D%F,D%B(i)%F,D%B(i)%M,D%E,D%mode,dt)
     end do
+
+    ! implicit Euler integration of interface physics
  
+    do i = 1,D%nifaces
+       im = D%I(i)%iblockm
+       ip = D%I(i)%iblockp
+       call update_fields_iface_implicit(D%I(i),D%B(im)%F,D%B(ip)%F,D%t,dt)
+    end do
+
     ! exchange fields between processes
 
     call exchange_fields(D%C,D%F)
@@ -155,7 +166,7 @@ contains
 
     use domain, only : domain_type
     use fields, only : scale_rates_interior,scale_rates_boundary
-    use boundaries, only : scale_rates_iface
+    use interfaces, only : scale_rates_iface
     use energy, only : scale_rates_energy
 
     implicit none
@@ -231,7 +242,7 @@ contains
     ! energy dissipation and boundary displacement rates
     
     do i = 1,D%nblocks
-       call set_rates_energy(  D%B(i)%G,D%B(i)%F)
+       call set_rates_energy(  D%B(i)%G,D%B(i)%F,D%mode)
        call set_rates_boundary(D%B(i)%G,D%B(i)%F,D%F%nU)
     end do
     
@@ -242,7 +253,7 @@ contains
 
     use domain, only : domain_type
     use fields, only : update_fields_interior,update_fields_boundary
-    use boundaries, only : update_fields_iface
+    use interfaces, only : update_fields_iface
     use energy, only : update_energy
 
     implicit none
@@ -736,7 +747,7 @@ contains
     if (B%sideL.and.B%nx/=1) then
        i = B%mgx
        do j = B%my,B%py
-          call SAT_term(F%DF(i,j,:),BF%bndFL%F(j,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFL%Fhat(j,:),BF%bndFL%F(j,:), &
                mode,B%bndL%n(j,:),BF%bndFL%M(j,4),BF%bndFL%M(j,5))
        end do
     end if
@@ -744,7 +755,7 @@ contains
     if (B%sideR.and.B%nx/=1) then
        i = B%pgx
        do j = B%my,B%py
-          call SAT_term(F%DF(i,j,:),BF%bndFR%F(j,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFR%Fhat(j,:),BF%bndFR%F(j,:), &
                mode,B%bndR%n(j,:),BF%bndFR%M(j,4),BF%bndFR%M(j,5))
        end do
     end if
@@ -752,7 +763,7 @@ contains
     if (B%sideB.and.B%ny/=1) then
        j = B%mgy
        do i = B%mx,B%px
-          call SAT_term(F%DF(i,j,:),BF%bndFB%F(i,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFB%Fhat(i,:),BF%bndFB%F(i,:), &
                mode,B%bndB%n(i,:),BF%bndFB%M(i,4),BF%bndFB%M(i,5))
        end do
     end if
@@ -760,7 +771,7 @@ contains
     if (B%sideT.and.B%ny/=1) then
        j = B%pgy
        do i = B%mx,B%px
-          call SAT_term(F%DF(i,j,:),BF%bndFT%F(i,:),F%F(i,j,:), &
+          call SAT_term(F%DF(i,j,:),BF%bndFT%Fhat(i,:),BF%bndFT%F(i,:), &
                mode,B%bndT%n(i,:),BF%bndFT%M(i,4),BF%bndFT%M(i,5))
        end do
     end if
@@ -768,12 +779,12 @@ contains
   end subroutine set_rates_SAT
 
 
-  subroutine SAT_term(DF,Fbnd,F,mode,normal,Ks,Kp)
+  subroutine SAT_term(DF,Fhat,F,mode,normal,Ks,Kp)
 
     implicit none
 
     real,dimension(:),intent(inout) :: DF
-    real,dimension(:),intent(in) :: Fbnd,F,normal
+    real,dimension(:),intent(in) :: Fhat,F,normal
     integer,intent(in) :: mode
     real,intent(in) :: Ks,Kp
 
@@ -781,11 +792,11 @@ contains
 
     select case(mode)
     case(2)
-       call split_sp(Fbnd-F,normal,Fs,Fp)
+       call split_sp(Fhat-F,normal,Fs,Fp)
        DF = DF+Ks*Fs
        DF = DF+Kp*Fp
     case(3)
-       DF = DF+Ks*(Fbnd-F)
+       DF = DF+Ks*(Fhat-F)
     end select
 
   end subroutine SAT_term

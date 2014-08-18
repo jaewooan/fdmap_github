@@ -580,6 +580,11 @@ contains
           case('z')
              print *, 'add ability to output z'
              stop
+          case('v')
+             item%mx = 1
+             item%px = D%I(item%iface)%HF%n
+             item%nx = D%I(item%iface)%HF%n
+             call subarray(item%nx,item%mx,item%px,MPI_REAL_PS,item%array)
           end select
           
           item%x = D%B(D%I(item%iface)%iblockm)%G%bndR%x(item%my)
@@ -615,6 +620,11 @@ contains
           case('z')
              print *, 'add ability to output z'
              stop
+          case('v')
+             item%my = 1
+             item%py = D%I(item%iface)%HF%n
+             item%ny = D%I(item%iface)%HF%n
+             call subarray(item%ny,item%my,item%py,MPI_REAL_PS,item%array)
           end select
           
           item%x = D%B(D%I(item%iface)%iblockm)%G%bndT%x(item%mx)
@@ -653,6 +663,14 @@ contains
           case('z')
              print *, 'add ability to output z'
              stop
+          case('v')
+             item%mx = 1
+             item%px = D%I(item%iface)%HF%n
+             item%nx = D%I(item%iface)%HF%n
+             call subarray(item%nx,item%ny, &
+                  item%mx,item%px, &
+                  item%my-D%I(item%iface)%mg+1,item%py-D%I(item%iface)%mg+1, &
+                  MPI_REAL_PS,item%array)
           end select
 
        end if
@@ -686,6 +704,14 @@ contains
           case('z')
              print *, 'add ability to output z'
              stop
+          case('v')
+             item%my = 1
+             item%py = D%I(item%iface)%HF%n
+             item%ny = D%I(item%iface)%HF%n
+             call subarray(item%nx,item%ny, &
+                  item%mx-D%I(item%iface)%mg+1,item%px-D%I(item%iface)%mg+1, &
+                  item%my,item%py, &
+                  MPI_REAL_PS,item%array)
           end select
 
        end if

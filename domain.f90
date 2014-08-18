@@ -3,7 +3,8 @@ module domain
   use material, only : block_material,elastic_type
   use grid, only : block_grid,grid_type
   use fields, only : block_fields,fields_type
-  use boundaries, only : block_boundaries,iface_type
+  use boundaries, only : block_boundaries
+  use interfaces, only : iface_type
   use mpi_routines2d, only : cartesian
   use source, only : source_type
 
@@ -40,10 +41,10 @@ contains
   subroutine init_domain(D,t,refine,CFL,dt,input,echo,cRK)
 
     use material, only : init_material,init_pml
-    use grid, only : read_grid,block_limits,init_grid,init_grid_partials
+    use grid, only : read_grid,write_grid,set_refine,block_limits,init_grid,init_grid_partials
     use fields, only : init_fields,exchange_fields
-    use boundaries, only : init_iface,init_iface_blocks,init_iface_fields, &
-         init_boundaries
+    use interfaces, only : init_iface,init_iface_blocks,init_iface_fields
+    use boundaries, only : init_boundaries
     use fd_coeff, only : init_fd
     use source , only : init_source
     use mpi_routines2d, only : decompose2d,exchange_all_neighbors
@@ -59,9 +60,14 @@ contains
 
     integer :: i,im,ip,mode,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,nF,nprocs_x,nprocs_y,stat
-    integer,dimension(:),allocatable :: blkxm,blkym
+    integer,dimension(:),allocatable :: blkxm,blkym,I_m,I_p
+    character(1),dimension(:),allocatable :: dir
     real :: Cdiss
     real,allocatable :: dtRK(:)
+    ! todo: remove this hard coded value that places an upper bound on the
+    ! number of blocks that can be used with the nx_list and ny_list feature
+    ! the default bound is: 1000^2
+    integer,dimension(1000) :: nx_list,ny_list
     character(10) :: FDmethod
     character(6) :: mpi_method
     character(256) :: str1,str2,str3,str
@@ -70,7 +76,7 @@ contains
 
     namelist /domain_list/ mode,FDmethod,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,mpi_method,nprocs_x,nprocs_y,decomposition_info,operator_split, &
-         energy_balance,displacement,exact_metric,peak
+         energy_balance,displacement,exact_metric,peak,nx_list,ny_list
 
     namelist /operator_list/ Cdiss
 
@@ -83,6 +89,8 @@ contains
     nblocks = 0
     nifaces = 0
     exact_metric = .false.
+    nx_list = 0
+    ny_list = 0
 
     nx = 1
     ny = 1
@@ -113,8 +121,11 @@ contains
        if (is_master) call message('Assuming that nblocks_y = 1')
     end if
     if (nblocks==0) then
-       nblocks = 1
-       if (is_master) call message('Assuming that nblocks = 1')
+       if (is_master) call message('Assuming that nblocks = nblocks_x*nblocks_y')
+       nblocks = nblocks_x*nblocks_y
+       if(nblocks == 0) then
+           nblocks = 1
+       end if
     end if
 
     D%mode = mode
@@ -122,7 +133,7 @@ contains
     D%nblocks_x = nblocks_x
     D%nblocks_y = nblocks_y
     D%nblocks = nblocks
-    D%nifaces = nifaces
+    D%nifaces = (nblocks_x - 1)*nblocks_y + (nblocks_y - 1)*nblocks_x
     D%exact_metric = exact_metric
 
     D%operator_split = operator_split
@@ -131,13 +142,6 @@ contains
 
     D%t = t
 
-    ! refine number of cells (ncells = npoints-nblocks)
-
-    if (nx/=1) nx = ceiling(dble(nx-D%nblocks_x)*refine)+D%nblocks_x
-    if (ny/=1) ny = ceiling(dble(ny-D%nblocks_y)*refine)+D%nblocks_y
-
-    D%C%nx = nx
-    D%C%ny = ny
 
     ! allocate memory for each block and interface
 
@@ -176,9 +180,32 @@ contains
     allocate(blkxm(D%nblocks),blkym(D%nblocks))
 
     do i = 1,D%nblocks
-       call read_grid(i,D%B(i)%G,refine,input,echo)
+       call read_grid(i,D%B(i)%G,input)
+    end do
+    
+    ! Set nx and ny using nx_list and ny_list
+    call set_block_grids(D,nx_list,ny_list)
+    
+    ! Set grid indices (mgx,mgy,iblock_x,iblock_y) for all blocks
+    call set_grid_indices(D%B,nblocks_x,nblocks_y)
+
+    
+
+    do i = 1,D%nblocks
+       call set_refine(i,D%B(i)%G,refine)
+    end do
+   
+    ! Set the refined number of grid points nx and ny for the domain 
+    call set_grid(D)
+    
+    do i = 1,D%nblocks
        call block_limits(D%B(i)%G,blkxm(i),blkym(i))
     end do
+
+    do i = 1,D%nblocks
+       call write_grid(i,D%B(i)%G,echo)
+    end do
+
 
     ! MPI decomposition of global 2D domain
 
@@ -229,14 +256,22 @@ contains
 
     ! initialize interfaces (grid and processor information)
 
+    allocate(I_m(D%nifaces),I_p(D%nifaces),dir(D%nifaces))
+
+    call get_iface_neighbors(D,I_m,I_p,dir)
+
     do i = 1,D%nifaces
-       call init_iface(i,D%I(i),refine,energy_balance,input)
+       call init_iface(i,D%I(i),I_m(i),I_p(i), &
+                       D%B(I_m(i))%G,D%B(I_p(i))%G, &
+                       dir(i),input,refine) 
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call init_iface_blocks(i,D%I(i),D%B(im)%G,D%B(ip)%G,D%C, &
-            refine,input,echo)
+       call init_iface_blocks(i,D%I(i),D%B(im)%G,D%B(ip)%G,D%C,refine)
        !call exchange_grid_edges(D%I(i),D%C,D%B(im)%G,D%B(ip)%G)
     end do
+    
+    deallocate(I_m,I_p,dir)
+
 
     ! initialize blocks (material properties, initial fields, etc.)
 
@@ -283,7 +318,7 @@ contains
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call init_iface_fields(i,D%I(i),refine,input,echo,dtRK)
+       call init_iface_fields(i,D%I(i),D%G%hmin,D%G%hmax,refine,input,echo,dtRK)
     end do
 
     ! enforce boundary and interface conditions (set hat variables)
@@ -298,7 +333,7 @@ contains
        call exchange_SAT_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
     end do
 
-    call enforce_edge_conditions(D,initialize=.true.)
+    call enforce_edge_conditions(D)
 
     deallocate(dtRK)
 
@@ -329,7 +364,7 @@ contains
     use grid, only : destroy_grid
     use fields, only : destroy_block_fields,destroy_fields
     use material, only : destroy_elastic
-    use boundaries, only : destroy_iface
+    use interfaces, only : destroy_iface
 
     implicit none
 
@@ -376,31 +411,32 @@ contains
   end subroutine prepare_edges
 
 
-  subroutine enforce_edge_conditions(D,initialize)
+  subroutine enforce_edge_conditions(D)
     
-    use boundaries, only : apply_bc
-    use fault, only : couple_blocks
+    use boundaries, only : enforce_boundary_conditions
+    use interfaces, only : enforce_interface_conditions
 
     implicit none
 
     type(domain_type),intent(inout) :: D
-    logical,intent(in) :: initialize
 
     integer :: i,im,ip
+
+    ! set hat variables on all block boundaries
+    ! also set rates for boundary and interface variables
     
-    ! adjust fields on boundaries to satisfy bc
+    ! enforce boundary conditions
     
     do i = 1,D%nblocks
-       call apply_bc(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%mode,D%t,i)
+       call enforce_boundary_conditions(D%B(i)%G,D%B(i)%F,D%B(i)%B,D%mode,D%t,i)
     end do
     
-    ! adjust fields on interfaces to satisfy jump conditions
-    ! (and set state rate)
+    ! enforce interface conditions
     
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call couple_blocks(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t,initialize)
+       call enforce_interface_conditions(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t)
     end do
     
   end subroutine enforce_edge_conditions
@@ -408,7 +444,7 @@ contains
 
   subroutine check_nucleation(D,minV,slipping)
 
-    use boundaries, only : maxV
+    use interfaces, only : maxV
     use mpi_routines, only : MPI_REAL_PW
     use mpi
 
@@ -564,8 +600,6 @@ contains
           call write_file_distributed(fh,D%I(i)%FR%Ds(my:py:sy))
        case('Dn')
           call write_file_distributed(fh,D%I(i)%FR%Dn(my:py:sy))
-       case('E')
-          call write_file_distributed(fh,D%I(i)%E(my:py:sy))
        case('D')
           call write_file_distributed(fh,D%I(i)%FR%D(my:py:sy))
        case('Psi')
@@ -578,24 +612,16 @@ contains
           call write_file_distributed(fh,D%I(i)%TP%T(mx:px:sx,my:py:sy))
        case('P')
           call write_file_distributed(fh,D%I(i)%TP%p(mx:px:sx,my:py:sy))
+       case('wm')
+          call write_file_distributed(fh,D%I(i)%HF%wm(my:py:sy))
+       case('wp')
+          call write_file_distributed(fh,D%I(i)%HF%wp(my:py:sy))
        case('p')
-          call write_file_distributed(fh,D%I(i)%ER%p(my:py:sy))
-       case('rho')
-          call write_file_distributed(fh,D%I(i)%ER%rho(my:py:sy))
+          call write_file_distributed(fh,D%I(i)%HF%p(my:py:sy))
        case('u')
-          call write_file_distributed(fh,D%I(i)%ER%u(my:py:sy))
-       case('c')
-          call write_file_distributed(fh,D%I(i)%ER%c(my:py:sy))
-       case('w')
-          call write_file_distributed(fh,D%I(i)%ER%w(my:py:sy))
-       case('Smin')
-          call write_file_distributed(fh,D%I(i)%ER%Smin(my:py:sy))
-       case('n')
-          call write_file_distributed(fh,D%I(i)%ER%n(my:py:sy))
-       case('q1')
-          call write_file_distributed(fh,D%I(i)%ER%q(my:py:sy,1))
-       case('q2')
-          call write_file_distributed(fh,D%I(i)%ER%q(my:py:sy,2))
+          call write_file_distributed(fh,D%I(i)%HF%u(my:py:sy))
+       case('v')
+          call write_file_distributed(fh,D%I(i)%HF%v(mx:px:sx,my:py:sy))
        end select
 
     case('ifacey','point_ifacey')
@@ -637,8 +663,6 @@ contains
           call write_file_distributed(fh,D%I(i)%FR%Ds(mx:px:sx))
        case('Dn')
           call write_file_distributed(fh,D%I(i)%FR%Dn(mx:px:sx))
-       case('E')
-          call write_file_distributed(fh,D%I(i)%E(mx:px:sx))
        case('D')
           call write_file_distributed(fh,D%I(i)%FR%D(mx:px:sx))
        case('Psi')
@@ -651,24 +675,16 @@ contains
           call write_file_distributed(fh,transpose(D%I(i)%TP%T(my:py:sy,mx:px:sx)))
        case('P')
           call write_file_distributed(fh,transpose(D%I(i)%TP%p(my:py:sy,mx:px:sx)))
+       case('wm')
+          call write_file_distributed(fh,D%I(i)%HF%wm(mx:px:sx))
+       case('wp')
+          call write_file_distributed(fh,D%I(i)%HF%wp(mx:px:sx))
        case('p')
-          call write_file_distributed(fh,D%I(i)%ER%p(mx:px:sx))
-       case('rho')
-          call write_file_distributed(fh,D%I(i)%ER%rho(mx:px:sx))
+          call write_file_distributed(fh,D%I(i)%HF%p(mx:px:sx))
        case('u')
-          call write_file_distributed(fh,D%I(i)%ER%u(mx:px:sx))
-       case('c')
-          call write_file_distributed(fh,D%I(i)%ER%c(mx:px:sx))
-       case('w')
-          call write_file_distributed(fh,D%I(i)%ER%w(mx:px:sx))
-       case('Smin')
-          call write_file_distributed(fh,D%I(i)%ER%Smin(mx:px:sx))
-       case('n')
-          call write_file_distributed(fh,D%I(i)%ER%n(mx:px:sx))
-       case('q1')
-          call write_file_distributed(fh,D%I(i)%ER%q(mx:px:sx,1))
-       case('q2')
-          call write_file_distributed(fh,D%I(i)%ER%q(mx:px:sx,2))
+          call write_file_distributed(fh,D%I(i)%HF%u(mx:px:sx))
+       case('v')
+          call write_file_distributed(fh,transpose(D%I(i)%HF%v(my:py:sy,mx:px:sx)))
        end select
 
     case('bndL')
@@ -684,6 +700,16 @@ contains
           call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,2))
+       case('vx')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,1))
+       case('vy')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,2))
+       case('sxx')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,3))
+       case('sxy')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,4))
+       case('syy')
+          call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,5))
        end select
 
     case('bndR')
@@ -699,6 +725,16 @@ contains
           call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,2))
+       case('vx')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,1))
+       case('vy')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,2))
+       case('sxx')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,3))
+       case('sxy')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,4))
+       case('syy')
+          call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,5))
        end select
 
     case('bndB')
@@ -714,6 +750,16 @@ contains
           call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,2))
+       case('vx')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,1))
+       case('vy')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,2))
+       case('sxx')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,3))
+       case('sxy')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,4))
+       case('syy')
+          call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,5))
        end select
 
     case('bndT')
@@ -729,6 +775,16 @@ contains
           call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,2))
+       case('vx')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,1))
+       case('vy')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,2))
+       case('sxx')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,3))
+       case('sxy')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,4))
+       case('syy')
+          call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,5))
        end select
 
     case('Eblock')
@@ -912,8 +968,6 @@ contains
           ok = allocated(D%I(i)%FR%Ds)
        case('Dn')
           ok = allocated(D%I(i)%FR%Dn)
-       case('E')
-          ok = allocated(D%I(i)%E)
        case('D')
           ok = allocated(D%I(i)%FR%D)
        case('Psi')
@@ -926,22 +980,16 @@ contains
           ok = allocated(D%I(i)%TP%T)
        case('P')
           ok = allocated(D%I(i)%TP%p)
+       case('wm')
+          ok = allocated(D%I(i)%HF%wm)
+       case('wp')
+          ok = allocated(D%I(i)%HF%wp)
        case('p')
-          ok = allocated(D%I(i)%ER%p)
-       case('rho')
-          ok = allocated(D%I(i)%ER%rho)
+          ok = allocated(D%I(i)%HF%p)
        case('u')
-          ok = allocated(D%I(i)%ER%u)
-       case('c')
-          ok = allocated(D%I(i)%ER%c)
-       case('w')
-          ok = allocated(D%I(i)%ER%w)
-       case('Smin')
-          ok = allocated(D%I(i)%ER%Smin)
-       case('n')
-          ok = allocated(D%I(i)%ER%n)
-       case('q1','q2')
-          ok = allocated(D%I(i)%ER%q)
+          ok = allocated(D%I(i)%HF%u)
+       case('v')
+          ok = allocated(D%I(i)%HF%v)
        end select
 
     case('bndL')
@@ -953,7 +1001,7 @@ contains
           ok = allocated(D%B(i)%G%bndL%x)
        case('y')
           ok = allocated(D%B(i)%G%bndL%y)
-       case('ux','uy')
+       case('ux','uy','vx','vy','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -966,7 +1014,7 @@ contains
           ok = allocated(D%B(i)%G%bndR%x)
        case('y')
           ok = allocated(D%B(i)%G%bndR%y)
-       case('ux','uy')
+       case('ux','uy','vx','vy','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -979,7 +1027,7 @@ contains
           ok = allocated(D%B(i)%G%bndB%x)
        case('y')
           ok = allocated(D%B(i)%G%bndB%y)
-       case('ux','uy')
+       case('ux','uy','vx','vy','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -992,7 +1040,7 @@ contains
           ok = allocated(D%B(i)%G%bndT%x)
        case('y')
           ok = allocated(D%B(i)%G%bndT%y)
-       case('ux','uy')
+       case('ux','uy','vx','vy','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -1334,6 +1382,153 @@ contains
     end if
 
   end subroutine set_dt
+  
+  subroutine set_grid_indices(B,nblocks_x,nblocks_y)
+
+      implicit none
+
+      type(block_type),intent(inout),dimension(*) :: B
+      integer,intent(in) :: nblocks_x,nblocks_y
+
+      integer :: ix,iy
+      
+      integer,dimension(:),allocatable :: mgx, mgy
+
+      allocate(mgx(nblocks_x))
+      allocate(mgy(nblocks_y))
+
+      mgx(1) = 1
+      mgy(1) = 1
+
+      ! mgx
+      do ix = 2,nblocks_x
+       mgx(ix) = mgx(ix-1) + B(ix-1)%G%nx
+      end do
+
+      
+      ! mgy
+      do iy = 2,nblocks_y
+       mgy(iy) = mgy(iy-1) + B(1 + (iy-2)*nblocks_x)%G%ny
+      end do
+
+      ! Update mgx, mgy, iblock_x, and iblock_y for each block
+      do ix = 1,nblocks_x
+       do iy = 1,nblocks_y
+         B(ix + (iy - 1)*nblocks_x)%G%mgx = mgx(ix)
+         B(ix + (iy - 1)*nblocks_x)%G%mgy = mgy(iy)
+         B(ix + (iy - 1)*nblocks_x)%G%iblock_x = ix
+         B(ix + (iy - 1)*nblocks_x)%G%iblock_y = iy
+        end do
+      end do
+
+      deallocate(mgx,mgy)
+
+
+  end subroutine
+
+  ! Set global nx and ny taking refinement into consideration
+  subroutine set_grid(D)
+
+    implicit none
+
+    type(domain_type),intent(inout) :: D
+
+    integer :: ix,iy,nx,ny
+
+    nx = 0
+    ny = 0
+
+    ! Load refined nx for each block
+    do ix=1,D%nblocks_x
+      nx = nx + D%B(ix)%G%nx
+    end do
+    
+    ! Load refined ny for each block
+    do iy=1,D%nblocks_y
+      ny = ny + D%B(1 + (iy - 1)*D%nblocks_x)%G%ny
+    end do
+
+    D%C%nx = nx
+    D%C%ny = ny
+
+  end subroutine
+
+  ! Set nx and ny for each grid if nx_list and ny_list are present in the
+  ! domain_list in the input file
+  subroutine set_block_grids(D,nx_list,ny_list)
+
+      use io, only : error
+      use mpi_routines, only: is_master
+      implicit none
+      
+      type(domain_type),intent(inout) :: D
+      integer,dimension(:) :: nx_list,ny_list
+
+      integer :: ix,iy,nx_count,ny_count
+
+      ! Do nothing if nx_list and ny_list is not used
+      if(nx_list(1) == 0) return
+      if(ny_list(1) == 0) return
+
+      ! Check that nx_list and ny_list contain the correct number of elements
+      if(is_master) then
+          nx_count = sum(min(1,nx_list(1:D%nblocks_x) ))
+          ny_count = sum(min(1,ny_list(1:D%nblocks_y) ))
+          if(nx_count /= D%nblocks_x) call error('incorrect number of elements in nx_list', &
+                                                 'domain::set_block_grids')
+          if(ny_count /= D%nblocks_y) call error('incorrect number of elements in ny_list', &
+                                                 'domain::set_block_grids')
+      end if
+
+      ! set nx and ny for each block by getting values from nx_list and ny_list
+      do ix=1,D%nblocks_x
+        do iy=1,D%nblocks_y
+          D%B(ix + (iy - 1)*D%nblocks_x)%G%nx = nx_list(ix)
+          D%B(ix + (iy - 1)*D%nblocks_x)%G%ny = ny_list(iy)
+        end do
+      end do
+
+
+
+
+  end subroutine
+
+  ! Get a list of interface neighbors for each interface
+  subroutine get_iface_neighbors(D,Im,Ip,dir)
+
+      implicit none
+      
+      type(domain_type),intent(in) :: D
+      integer,intent(out),dimension(*) :: Im, Ip
+      character(1),intent(out),dimension(*) :: dir
+
+      integer :: ix,iy,offset
+
+      ! Interfaces with normal in the x-direction
+
+      do ix = 1, (D%nblocks_x - 1)
+       do iy = 1, D%nblocks_y
+        Im(ix + (iy-1)*(D%nblocks_x - 1)) = ix   + D%nblocks_x*(iy - 1)
+        Ip(ix + (iy-1)*(D%nblocks_x - 1)) = ix+1 + D%nblocks_x*(iy - 1)
+        end do
+      end do
+
+      offset = (D%nblocks_x - 1)*D%nblocks_y
+      dir(1:offset) = 'x'
+
+
+      ! Interfaces with normal in the y-direction
+
+      do ix = 1, D%nblocks_x
+       do iy = 1, D%nblocks_y-1
+        Im(offset + ix + (iy-1)*D%nblocks_x) = ix   + D%nblocks_x*(iy - 1)
+        Ip(offset + ix + (iy-1)*D%nblocks_x) = ix   + D%nblocks_x*iy
+        end do
+      end do
+
+      dir(offset+1:D%nifaces) = 'y'
+
+ end subroutine
 
 
 end module domain
