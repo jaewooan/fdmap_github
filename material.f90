@@ -20,7 +20,7 @@ module material
           G,nu,lambda,K,M,gamma,Zs,Zsi,Zp,Zpi, &
           beta,mu,b,h,eta
      type(pml_type) :: pml
-     logical :: heterogeneous,plastic_strain_tensor,plastic_energy
+     logical :: heterogeneous,plastic_strain_tensor,plastic_work
   end type block_material
 
 contains
@@ -42,17 +42,17 @@ contains
     integer :: stat
     character(256) :: Mstr,str,response,filename
     real :: rho,G,cs,cp,beta,mu,b,h,eta
-    logical :: heterogeneous,plastic_strain_tensor,plastic_energy
+    logical :: heterogeneous,plastic_strain_tensor,plastic_work
 
     namelist /material_list/ response,heterogeneous,filename,rho,G,cs,cp,beta,mu,b,h,eta, &
-         plastic_strain_tensor,plastic_energy
+         plastic_strain_tensor,plastic_work
 
     ! defaults
     
     response = 'elastic'
     heterogeneous = .false.
     plastic_strain_tensor = .false.
-    plastic_energy = .false.
+    plastic_work = .false.
     filename = ''
     rho = 0d0
     G = 0d0
@@ -96,7 +96,7 @@ contains
     M%response = response
     M%heterogeneous = heterogeneous
     M%plastic_strain_tensor = plastic_strain_tensor
-    M%plastic_energy = plastic_energy
+    M%plastic_work = plastic_work
     M%rho = rho
     M%G = G
     M%cs = cs

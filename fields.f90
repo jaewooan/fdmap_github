@@ -189,7 +189,7 @@ contains
           call allocate_array_body(F%lambda ,C,ghost_nodes=.false.,Fval=0d0)
           if(M%plastic_strain_tensor) &
                call allocate_array_body(F%Ep,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
-          if(M%plastic_energy) &
+          if(M%plastic_work) &
                call allocate_array_body(F%Wp,C,ghost_nodes=.false.,Fval=0d0)
        end if
     end if

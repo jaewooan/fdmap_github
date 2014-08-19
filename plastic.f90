@@ -47,7 +47,7 @@ contains
                M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt,ep,Wp)
 
           if (allocated(F%Ep)) F%ep(i,j,:) = F%ep(i,j,:)+ep
-          if (allocated(F%Wp)) F%Wp(i,j,:) = F%Wp(i,j,:)+Wp
+          if (allocated(F%Wp)) F%Wp(i,j)   = F%Wp(i,j)  +Wp
           
        end do
     end do
