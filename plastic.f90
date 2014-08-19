@@ -23,7 +23,7 @@ contains
     real,intent(in) :: dt
 
     integer :: i,j
-    real :: Gel,Kel,s0(6)
+    real :: Gel,Kel,s0(6),ep(6),Wp
 
     logical :: heterogeneous
 
@@ -43,13 +43,11 @@ contains
           end if
 
           call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode)
-          if(allocated(F%EP)) then
-            call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
-              M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt,F%EP(i,j,:))
-          else
-            call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
-              M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt)
-          end if
+          call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
+               M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt,ep,Wp)
+
+          if (allocated(F%Ep)) F%ep(i,j,:) = F%ep(i,j,:)+ep
+          if (allocated(F%Wp)) F%Wp(i,j,:) = F%Wp(i,j,:)+Wp
           
        end do
     end do
@@ -57,7 +55,7 @@ contains
   end subroutine update_fields_plastic
 
 
-  subroutine plastic_flow(Ds,lambda,M,G,K,mode,s,gammap,s0,dt,ep)
+  subroutine plastic_flow(Ds,lambda,M,G,K,mode,s,gammap,s0,dt,ep,Wp)
 
     use material, only : block_material
     use io, only : error
@@ -69,9 +67,11 @@ contains
     ! S0 = initial stress
     ! S = stress change (added to S0 to get absolute stress)
     ! GAMMAP = plastic strain
+    ! EP = plastic strain tensor increment
+    ! WP = plastic work increment
 
     real,intent(inout) :: Ds(:),lambda,s(:),gammap
-    real,intent(inout),optional :: ep(:)
+    real,intent(out) :: ep(:),Wp
     type(block_material),intent(in) :: M
     integer,intent(in) :: mode
     real,intent(in) :: G,K,s0(6),dt
@@ -177,11 +177,11 @@ contains
        Ds = Ds-lambda* (/ W(3),W(5) /)
     end select
     
-    if(present(ep)) then
-      ! update plastic strain rates using new deviatoric stress, lambda, and tau
-      ep = ep+dt*lambda*(sd/(2*tau)+(M%beta/3)*delta)
-    end if
+    ! plastic strain tensor increment
+    ep = dt*lambda*(sd/(2d0*tau)+(M%beta/3d0)*delta)
 
+    ! plastic work rate increment
+    Wp = dt*lambda*(tau+(M%beta/3d0)*sigma)
        
   end subroutine plastic_flow
 

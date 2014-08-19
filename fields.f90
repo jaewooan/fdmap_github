@@ -33,7 +33,7 @@ module fields
      real :: Etot
      real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga
      real,dimension(:,:,:),allocatable :: Wx,Wy,DWx,DWy ! PML fields
-     real,dimension(:,:),allocatable :: gammap,lambda
+     real,dimension(:,:),allocatable :: gammap,lambda,Wp
      real,dimension(:),allocatable :: Hx,Hy
   end type fields_type
 
@@ -188,7 +188,9 @@ contains
           call allocate_array_body(F%gammap ,C,ghost_nodes=.false.,Fval=0d0)
           call allocate_array_body(F%lambda ,C,ghost_nodes=.false.,Fval=0d0)
           if(M%plastic_strain_tensor) &
-               call allocate_array_body(F%Ep ,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
+               call allocate_array_body(F%Ep,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
+          if(M%plastic_energy) &
+               call allocate_array_body(F%Wp,C,ghost_nodes=.false.,Fval=0d0)
        end if
     end if
     if (pmlx .and. .not.allocated(F%Wx)) then
@@ -267,8 +269,9 @@ contains
     if (allocated(F%U      )) deallocate(F%U      )
     if (allocated(F%DU     )) deallocate(F%DU     )
     if (allocated(F%gammap )) deallocate(F%gammap )
-    if (allocated(F%EP     )) deallocate(F%EP     )
     if (allocated(F%lambda )) deallocate(F%lambda )
+    if (allocated(F%EP     )) deallocate(F%EP     )
+    if (allocated(F%Wp     )) deallocate(F%Wp     )
     if (allocated(F%Hx     )) deallocate(F%Hx     )
     if (allocated(F%Hy     )) deallocate(F%Hy     )
 
@@ -354,6 +357,7 @@ contains
        if(F%peak) call read_file_distributed(fh,F%pga(C%mx:C%px,C%my:C%py,1))
        if (allocated(F%gammap )) call read_file_distributed(fh,F%gammap )
        if (allocated(F%lambda )) call read_file_distributed(fh,F%lambda )
+       if (allocated(F%Wp     )) call read_file_distributed(fh,F%Wp     )
        if (allocated(F%Wx     )) call read_file_distributed(fh,F%Wx     )
        if (allocated(F%Wy     )) call read_file_distributed(fh,F%Wy     )
        if (allocated(F%EP     )) then
@@ -376,6 +380,7 @@ contains
        if(F%peak) call write_file_distributed(fh,F%pga(:,:,1))
        if (allocated(F%gammap )) call write_file_distributed(fh,F%gammap )
        if (allocated(F%lambda )) call write_file_distributed(fh,F%lambda )
+       if (allocated(F%Wp     )) call write_file_distributed(fh,F%Wp     )
        if (allocated(F%Wx     )) call write_file_distributed(fh,F%Wx     )
        if (allocated(F%Wy     )) call write_file_distributed(fh,F%Wy     )
        if (allocated(F%EP     )) then
