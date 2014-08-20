@@ -91,6 +91,8 @@ contains
 
     if (Y<=0d0) then ! no plastic flow
        lambda = 0d0
+       ep = 0d0
+       Wp = 0d0
        return
     end if
 
