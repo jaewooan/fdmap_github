@@ -41,7 +41,7 @@ module friction
      type(kinematic) :: kn
      type(pseudodynamic) :: pd
      type(load) :: ld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW
   end type fr_type
 
 
@@ -226,6 +226,11 @@ contains
     FR%D = 0d0
     FR%trup = 1d10
 
+    allocate(FR%W(m:p),FR%DW(m:p))
+
+    FR%W  = 0d0
+    FR%DW = 1d40
+
     select case(FR%friction_law)
     case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
        allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
@@ -278,6 +283,8 @@ contains
     if (allocated(FR%Dn  )) deallocate(FR%Dn  )
     if (allocated(FR%DDs )) deallocate(FR%DDs )
     if (allocated(FR%DDn )) deallocate(FR%DDn )
+    if (allocated(FR%W   )) deallocate(FR%W   )
+    if (allocated(FR%DW  )) deallocate(FR%DW  )
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -378,6 +385,8 @@ contains
        call read_file_distributed(fh,FR%Dn)
        call read_file_distributed(fh,FR%DDs)
        call read_file_distributed(fh,FR%DDn)
+       call read_file_distributed(fh,FR%W)
+       call read_file_distributed(fh,FR%DW)
     case('write')
        call write_file_distributed(fh,FR%D)
        call write_file_distributed(fh,FR%Psi)
@@ -393,6 +402,8 @@ contains
        call write_file_distributed(fh,FR%Dn)
        call write_file_distributed(fh,FR%DDs)
        call write_file_distributed(fh,FR%DDn)
+       call write_file_distributed(fh,FR%W)
+       call write_file_distributed(fh,FR%DW)
     end select
 
   end subroutine checkpoint_friction
@@ -408,6 +419,7 @@ contains
     FR%DDs  = A*FR%DDs
     FR%DDn  = A*FR%DDn
     FR%DPsi = A*FR%DPsi
+    FR%DW   = A*FR%DW
 
   end subroutine scale_rates_friction
   
@@ -423,6 +435,7 @@ contains
     FR%Dn  = FR%Dn +dt*FR%DDn
     FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
+    FR%W   = FR%W  +dt*FR%DW
 
   end subroutine update_fields_friction
 
@@ -843,6 +856,7 @@ contains
        FR%DDs(i) = FR%DDs(i)+FR%V(i) ! shear (tangential) displacement discontinuity rate
        FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
        FR%DPsi(i) = FR%DPsi(i)+state_rate(FR,FR%V(i),FR%Psi(i),i,x(i),y(i),t)
+       FR%DW(i) = FR%DW(i)+FR%S(i)*FR%V(i) ! work rate
        call rupture_front(FR,FR%D(i),FR%V(i),t,FR%trup(i))
     end do
 
