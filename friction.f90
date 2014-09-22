@@ -38,7 +38,7 @@ module friction
   type :: fr_type
      logical :: opening,force
      character(256) :: friction_law,problem,rup_field
-     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
+     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton
      type(background_stress) :: bs
      type(ratestate) :: rs
      type(slipweak) :: sw
@@ -70,7 +70,7 @@ contains
 
     logical :: opening,force,friction_file,stress_file
     character(256) :: friction_law,problem,rup_field,filename,stress_filename
-    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
+    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
@@ -79,7 +79,7 @@ contains
     namelist /friction_list/ opening,force,friction_law,problem,friction_file, &
                              filename,stress_file,stress_filename,S0,Psi0,     &
                              angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
-                             uni_dSdx,xlockm,xlockp,flock
+                             uni_dSdx,xlockm,xlockp,flock,skempton
 
     ! defaults
 
@@ -105,6 +105,7 @@ contains
     xlockm = -1d10
     xlockp = 1d10
     flock = 1d10
+    skempton = 0d0
 
     ! read in friction parameters
 
@@ -128,6 +129,7 @@ contains
     FR%xlockm = xlockm
     FR%xlockp = xlockp
     FR%flock = flock
+    FR%skempton = skempton
 
     ! output friction parameters
     
@@ -145,6 +147,8 @@ contains
        call write_matlab(echo,'xlockm',FR%xlockm,FRstr)
        call write_matlab(echo,'xlockp',FR%xlockp,FRstr)
        call write_matlab(echo,'flock',FR%flock,FRstr)
+
+       call write_matlab(echo,'skempton',FR%skempton,FRstr)
 
        select case(FR%friction_law)
 
