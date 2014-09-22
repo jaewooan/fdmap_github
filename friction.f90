@@ -34,8 +34,7 @@ module friction
   type :: fr_type
      logical :: opening,force
      character(256) :: friction_law,problem,rup_field
-     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-     subduction_f0,subduction_N0,subduction_B
+     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
@@ -66,16 +65,14 @@ contains
 
     logical :: opening,force,friction_file
     character(256) :: friction_law,problem,rup_field,filename
-    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-    subduction_f0,subduction_N0,subduction_B
+    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
     type(load) :: ld
 
     namelist /friction_list/ opening,force,friction_law,problem,friction_file,filename, &
-         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-         subduction_f0,subduction_N0,subduction_B
+         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
 
     ! defaults
 
@@ -99,9 +96,6 @@ contains
     xlockm = -1d10
     xlockp = 1d10
     flock = 1d10
-    subduction_f0=0d0
-    subduction_N0=0d0
-    subduction_B=0d0
 
     ! read in friction parameters
 
@@ -125,9 +119,6 @@ contains
     FR%xlockm = xlockm
     FR%xlockp = xlockp
     FR%flock = flock
-    FR%subduction_f0 = subduction_f0
-    FR%subduction_N0 = subduction_N0
-    FR%subduction_B = subduction_B
 
     ! output friction parameters
     
@@ -141,9 +132,6 @@ contains
        call write_matlab(echo,'force',FR%force,FRstr)
        call write_matlab(echo,'angle',FR%angle,FRstr)
        call write_matlab(echo,'S0',FR%f_S0,FRstr)
-       call write_matlab(echo,'subduction_f0',FR%subduction_f0,FRstr)
-       call write_matlab(echo,'subduction_N0',FR%subduction_N0,FRstr)
-       call write_matlab(echo,'subduction_B',FR%subduction_B,FRstr)
 
        call write_matlab(echo,'xlockm',FR%xlockm,FRstr)
        call write_matlab(echo,'xlockp',FR%xlockp,FRstr)
