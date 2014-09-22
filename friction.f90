@@ -45,7 +45,8 @@ module friction
      type(kinematic) :: kn
      type(pseudodynamic) :: pd
      type(load) :: ld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW,&
+                                      DV,Neff
   end type fr_type
 
 
@@ -152,7 +153,7 @@ contains
 
        select case(FR%friction_law)
 
-       case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+       case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate', 'RFSL')
 
           call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
@@ -227,13 +228,21 @@ contains
     FR%D = 0d0
     FR%trup = 1d10
 
+    if(FR%friction_law .eq. 'RFSL') then
+      allocate(FR%DV(m:p))
+      FR%DV = 1d40
+
+      allocate(FR%Neff(m:p))
+      FR%Neff = 1d40
+    endif
+
     allocate(FR%W(m:p),FR%DW(m:p))
 
     FR%W  = 0d0
     FR%DW = 1d40
 
     select case(FR%friction_law)
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate', 'RFSL')
        allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
        FR%rs%a  = rs%a
        FR%rs%b  = rs%b
@@ -297,6 +306,8 @@ contains
     if (allocated(FR%DDn )) deallocate(FR%DDn )
     if (allocated(FR%W   )) deallocate(FR%W   )
     if (allocated(FR%DW  )) deallocate(FR%DW  )
+    if (allocated(FR%DV  )) deallocate(FR%DV  )
+    if (allocated(FR%Neff)) deallocate(FR%Neff)
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -339,7 +350,7 @@ contains
 
     select case(FR%friction_law)
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate', 'RFSL')
        
        call read_file_distributed(fh,FR%rs%a )
        call read_file_distributed(fh,FR%rs%b )
@@ -457,6 +468,7 @@ contains
     FR%DDn  = A*FR%DDn
     FR%DPsi = A*FR%DPsi
     FR%DW   = A*FR%DW
+    if (allocated(FR%DV )) FR%DV = A*FR%DV
 
   end subroutine scale_rates_friction
   
@@ -473,6 +485,7 @@ contains
     FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
     FR%W   = FR%W  +dt*FR%DW
+    if (allocated(FR%DV )) FR%V = FR%V  +dt*FR%DV
 
   end subroutine update_fields_friction
 
@@ -494,6 +507,9 @@ contains
     real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
+
+
+    if(FR%friction_law .eq. 'RFSL') return
 
     ! loads (stresses acting on fault in absence of any slip)
 
@@ -878,7 +894,6 @@ contains
 
   end subroutine estimate_V
 
-
   subroutine set_rates_friction(FR,m,p,x,y,t)
 
     implicit none
@@ -886,7 +901,7 @@ contains
     type(fr_type),intent(inout) :: FR
     integer,intent(in) :: m,p
     real,intent(in) :: x(m:p),y(m:p),t
-        
+
     integer :: i
 
     do i = m,p
@@ -919,7 +934,7 @@ contains
     ! state evolution not required for some friction laws
 
     select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
+    case('frictionless','pseudodynamic','SW','RFSL')
        DPsi = 0d0
        return
     end select
