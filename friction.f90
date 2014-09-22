@@ -10,6 +10,10 @@ module friction
      real :: c0,fs,fd,Dc
   end type slipweak_constant
 
+  type :: background_stress
+     real,dimension(:),allocatable :: N0, S0
+  end type background_stress
+
   type :: ratestate
      real,dimension(:),allocatable :: a,b,V0,f0,L,fw,Vw
   end type ratestate
@@ -35,6 +39,7 @@ module friction
      logical :: opening,force
      character(256) :: friction_law,problem,rup_field
      real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
+     type(background_stress) :: bs
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
@@ -63,16 +68,18 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file
-    character(256) :: friction_law,problem,rup_field,filename
+    logical :: opening,force,friction_file,stress_file
+    character(256) :: friction_law,problem,rup_field,filename,stress_filename
     real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
     type(load) :: ld
 
-    namelist /friction_list/ opening,force,friction_law,problem,friction_file,filename, &
-         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
+    namelist /friction_list/ opening,force,friction_law,problem,friction_file, &
+                             filename,stress_file,stress_filename,S0,Psi0,     &
+                             angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
+                             uni_dSdx,xlockm,xlockp,flock
 
     ! defaults
 
@@ -81,7 +88,9 @@ contains
     friction_law = 'frictionless'
     problem = ''
     friction_file = .false.
+    stress_file   = .false.
     filename = ''
+    stress_filename = ''
     Psi0 = 0d0
     S0 = 0d0
     angle = 0d0
@@ -248,6 +257,17 @@ contains
        if (process_p) call read_friction(FR,filename,comm_p,array)
     end if
 
+    if (stress_file) then
+       allocate(FR%bs%N0(m:p),FR%bs%S0(m:p))
+       FR%bs%N0(m:p) = 1d40
+       FR%bs%S0(m:p) = 1d40
+
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_stress(FR,stress_filename,comm_m,array)
+       if (process_p) call read_stress(FR,stress_filename,comm_p,array)
+    end if
+
+
   end subroutine init_friction
 
 
@@ -290,6 +310,9 @@ contains
     if (allocated(FR%pd%Dmax)) deallocate(FR%pd%Dmax)
     if (allocated(FR%pd%trup)) deallocate(FR%pd%trup)
     if (allocated(FR%pd%Vpeak)) deallocate(FR%pd%Vpeak)
+
+    if (allocated(FR%bs%N0)) deallocate(FR%bs%N0)
+    if (allocated(FR%bs%S0)) deallocate(FR%bs%S0)
 
   end subroutine destroy_friction
 
@@ -342,6 +365,28 @@ contains
 
   end subroutine read_friction
 
+  subroutine read_stress(FR,stress_filename,comm,array)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: stress_filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,stress_filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%bs%S0)
+    call read_file_distributed(fh,FR%bs%N0)
+
+    call close_file_distributed(fh)
+
+  end subroutine read_stress
 
   subroutine checkpoint_friction(fh,operation,FR)
 
