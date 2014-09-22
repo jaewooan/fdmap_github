@@ -493,7 +493,7 @@ contains
 
     ! loads (stresses acting on fault in absence of any slip)
 
-    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i))
+    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i),i)
 
     ! stress on fault in absence of active slipping and opening
 
@@ -1059,7 +1059,7 @@ contains
   end function coth
 
 
-  subroutine load_stress(FR,x,y,t,S0,N0)
+  subroutine load_stress(FR,x,y,t,S0,N0,i)
 
     use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step
     use io, only : error
@@ -1071,6 +1071,7 @@ contains
     type(fr_type),intent(in) :: FR
     real,intent(in) :: x,y,t
     real,intent(out) :: S0,N0
+    integer,intent(in) :: i
 
     real :: r,A,B,xx,dip
 
@@ -1085,6 +1086,9 @@ contains
        r = abs((xx-FR%ld%x0)/FR%ld%R)
        N0 = 0
        S0 = 0
+
+       if(allocated(FR%bs%S0)) S0 = FR%bs%S0(i)
+       if(allocated(FR%bs%N0)) N0 = FR%bs%N0(i)
 
        select case(FR%ld%shape)
        case default
