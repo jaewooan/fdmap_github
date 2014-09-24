@@ -502,7 +502,7 @@ contains
     ! stress on fault in absence of active slipping and opening
 
     Slock = FR%S0(i)+phis
-    Nlock = FR%N0(i)-phip
+    Nlock = FR%N0(i)-(1-skempton)*phip
 
     ! fault normal stress and opening rate (no opening condition)
 
