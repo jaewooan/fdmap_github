@@ -38,14 +38,14 @@ module friction
   type :: fr_type
      logical :: opening,force
      character(256) :: friction_law,problem,rup_field
-     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton
+     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
      type(background_stress) :: bs
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
      type(pseudodynamic) :: pd
      type(load) :: ld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW,Sf,DSf,DV
   end type fr_type
 
 
@@ -70,7 +70,7 @@ contains
 
     logical :: opening,force,friction_file,stress_file
     character(256) :: friction_law,problem,rup_field,filename,stress_filename
-    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton
+    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
@@ -79,7 +79,7 @@ contains
     namelist /friction_list/ opening,force,friction_law,problem,friction_file, &
                              filename,stress_file,stress_filename,S0,Psi0,     &
                              angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
-                             uni_dSdx,xlockm,xlockp,flock,skempton
+                             uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
 
     ! defaults
 
@@ -106,6 +106,7 @@ contains
     xlockp = 1d10
     flock = 1d10
     skempton = 0d0
+    Sf0 = 0d0
 
     ! read in friction parameters
 
@@ -153,7 +154,6 @@ contains
        select case(FR%friction_law)
 
        case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
-
           call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
           call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
@@ -162,13 +162,21 @@ contains
           call write_matlab(echo,'rs.L' ,rs%L ,FRstr)
           call write_matlab(echo,'rs.fw',rs%fw,FRstr)
           call write_matlab(echo,'rs.Vw',rs%Vw,FRstr)
-
        case('SW')
-
           call write_matlab(echo,'sw.c0',sw%c0,FRstr)
           call write_matlab(echo,'sw.fs',sw%fs,FRstr)
           call write_matlab(echo,'sw.fd',sw%fd,FRstr)
           call write_matlab(echo,'sw.Dc',sw%Dc,FRstr)
+       case('RSLrate')
+          call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
+          call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
+          call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
+          call write_matlab(echo,'rs.V0',rs%V0,FRstr)
+          call write_matlab(echo,'rs.f0',rs%f0,FRstr)
+          call write_matlab(echo,'rs.L' ,rs%L ,FRstr)
+          call write_matlab(echo,'rs.fw',rs%fw,FRstr)
+          call write_matlab(echo,'rs.Vw',rs%Vw,FRstr)
+          call write_matlab(echo,'Sf0'  ,Sf0  ,FRstr)
 
        end select
 
@@ -253,6 +261,21 @@ contains
        FR%pd%Dmax = 0d0
        FR%pd%trup = 1d40
        FR%pd%Vpeak = 0d0
+    case('RSLrate')
+       allocate(FR%Sf(m:p),FR%DSf(m:p),FR%DV(m:p))
+       FR%Sf  = Sf0
+       FR%DSf = 1d40
+       FR%DV  = 1d40
+       allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
+       FR%rs%a  = rs%a
+       FR%rs%b  = rs%b
+       FR%rs%V0 = rs%V0
+       FR%rs%f0 = rs%f0
+       FR%rs%L  = rs%L
+       FR%rs%fw = rs%fw
+       FR%rs%Vw = rs%Vw
+       FR%S0 = FR%Sf
+       FR%S = FR%Sf
     end select
 
     if (friction_file) then
@@ -318,6 +341,10 @@ contains
     if (allocated(FR%bs%N0)) deallocate(FR%bs%N0)
     if (allocated(FR%bs%S0)) deallocate(FR%bs%S0)
 
+    if (allocated(FR%Sf  )) deallocate(FR%Sf  )
+    if (allocated(FR%DSf )) deallocate(FR%DSf )
+    if (allocated(FR%DV  )) deallocate(FR%DV  )
+
   end subroutine destroy_friction
 
 
@@ -339,7 +366,7 @@ contains
 
     select case(FR%friction_law)
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RSLrate')
        
        call read_file_distributed(fh,FR%rs%a )
        call read_file_distributed(fh,FR%rs%b )
@@ -424,6 +451,9 @@ contains
        call read_file_distributed(fh,FR%DDn)
        call read_file_distributed(fh,FR%W)
        call read_file_distributed(fh,FR%DW)
+       call read_file_distributed(fh,FR%Sf)
+       call read_file_distributed(fh,FR%DSf)
+       call read_file_distributed(fh,FR%DV)
     case('write')
        call write_file_distributed(fh,FR%D)
        call write_file_distributed(fh,FR%Psi)
@@ -441,6 +471,9 @@ contains
        call write_file_distributed(fh,FR%DDn)
        call write_file_distributed(fh,FR%W)
        call write_file_distributed(fh,FR%DW)
+       call write_file_distributed(fh,FR%Sf)
+       call write_file_distributed(fh,FR%DSf)
+       call write_file_distributed(fh,FR%DV)
     end select
 
   end subroutine checkpoint_friction
@@ -458,6 +491,11 @@ contains
     FR%DPsi = A*FR%DPsi
     FR%DW   = A*FR%DW
 
+    if (allocated(FR%DV)) then
+       FR%DV   = A*FR%DV
+       FR%DSf  = A*FR%DSf
+    end if
+
   end subroutine scale_rates_friction
   
 
@@ -474,21 +512,48 @@ contains
     FR%Psi = FR%Psi+dt*FR%DPsi
     FR%W   = FR%W  +dt*FR%DW
 
+!    if (allocated(FR%DV)) then
+!       FR%V   = FR%V  +dt*FR%DV
+!       FR%Sf  = FR%Sf +dt*FR%DSf
+!    end if
+
   end subroutine update_fields_friction
 
 
-  subroutine solve_friction(FR,V,S,O,N,phip,phis,eta,D,Psi,i,x,y,t,info)
+  subroutine solve_friction(FR,V,S,O,N,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
 
     use mms, only : bessel,inplane_fault_mms
     use io, only : error
 
     implicit none
 
-    type(fr_type),intent(inout) :: FR
-    real,intent(inout) :: V,S,O,N
-    real,intent(in) :: phip,phis,eta,D,Psi,x,y,t
+    ! FR = friction variables
+    ! V = slip velocity
+    ! S = shear stress
+    ! O = opening rate
+    ! N = eff normal stress
+    ! phip,phis = stress transfer for normal, shear components
+    ! eta = shear radiation damping
+    ! D = slip (integral of absolute value of slip velocity)
+    ! Psi = state variable
+    ! x,y,t = positions and time
+    ! i = index of point on interface being updated
+    ! info = flag, true to display nonlinear solver details
+
+    type(fr_type),intent(inout) :: FR 
+    real,intent(inout) :: V,S,O,N 
+    real,intent(in) :: phip,phis,eta,D,Psi,x,y,t,dt ! don't include Sf, DV, DSf -- components of FR
     integer,intent(in) :: i
     logical,intent(in) :: info
+
+    ! fail = true if nonlinear solver failed
+    ! Nlock, Slock = normal, shear stresses acting on interface in absence of further opening, slip
+    ! Sk = fault strength, kinematically forced
+    ! xm,xp,fkm,fkp = kinematic forcing
+    ! xx = coordinate along fault
+    ! Vex,Sex,Nex,Psiex = exact solutions (for mms)
+    ! sw = slip weakening friction parameters
+    ! rs = rate-state friction parameters
 
     logical :: fail
     real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
@@ -502,7 +567,7 @@ contains
     ! stress on fault in absence of active slipping and opening
 
     Slock = FR%S0(i)+phis
-    Nlock = FR%N0(i)-(1-skempton)*phip
+    Nlock = FR%N0(i)-(1d0-FR%skempton)*phip
 
     ! fault normal stress and opening rate (no opening condition)
 
@@ -543,6 +608,7 @@ contains
     end select
 
     ! frictional strength from kinematic forcing
+! could move this to a separate subroutine
 
     if (FR%force) then
 
@@ -649,9 +715,63 @@ contains
           end if
        end if
 
+    case('RSLrate') ! Rate form of slip law
+       if (dt==0d0) then
+          S = FR%Sf(i)
+          V = (Slock-S)/eta
+!          if (i==11) print *,'Hello1 ',S,' ',V,' ',Slock,' ',eta
+          return
+       end if
+!       if (i==11) print *,'Hello4 ',V,' ',dt
+       call solve_friction_rate_form(FR,V,S,N,Slock,eta,x,y,dt,i,rs)
+!       if (i==10) print *, 'Hello2 ', S, ' ', V, ' ', FR%Sf(i)
+
     end select
 
   end subroutine solve_friction
+
+
+  subroutine solve_friction_rate_form(FR,V,S,N,Slock,eta,x,y,dt,i,rs)
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    real,intent(inout) :: V,S,N
+    real,intent(in) :: Slock,eta,x,y,dt
+    integer,intent(in) :: i
+    type(ratestate_constant) :: rs
+    
+    real :: alpha,beta,fv,absV,Vold,Sfold,Ftau,Fvee
+
+    call ratestate_param(i,x,y,FR,rs)
+
+    Vold = V
+    Sfold = FR%Sf(i)
+    
+    absV = abs(V)
+
+!    if (V==0d0) then
+       
+
+!    if (i==11) print *,'Hello4 ',absV,' ',N,' ',FR%Sf(i)
+    if (i==11) print *,'Hello5 ',FR%DSf(i),' ',FR%DV(i)
+    fv = rs%f0 - (rs%b-rs%a)*log(absV/rs%V0)
+    alpha = rs%a*N/V*tanh(FR%Sf(i)/(rs%a*N))
+    beta = -V/rs%L*(FR%Sf(i)-N*fv)
+!    if (i==10) print *, 'Hello3 ',fv,' ',alpha,' ',beta
+
+    V = (Slock-FR%Sf(i)-dt*FR%DSf(i)+V*alpha+dt*alpha*FR%DV(i)-dt*beta)/(alpha+eta)
+
+    FR%Sf(i) = Slock-eta*V
+    S = FR%Sf(i)
+
+    Ftau = (FR%Sf(i)-Sfold)/dt-FR%DSf(i)
+    Fvee = (V-Vold)/dt-FR%DV(i)
+    
+    FR%DSf(i) = FR%DSf(i) + Ftau
+    FR%DV(i)  = FR%DV(i)  + Fvee
+
+  end subroutine solve_friction_rate_form
 
 
   subroutine slipweak_param(i,x,y,FR,sw)
@@ -699,7 +819,7 @@ contains
     real,intent(in) :: Slock,N,eta,Psi,x,y,t
     logical,intent(in) :: info
     logical,intent(out) :: fail
-    
+
     character(256) :: str
     integer :: i
     integer,parameter :: imax=99
@@ -894,6 +1014,8 @@ contains
        FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
        FR%DPsi(i) = FR%DPsi(i)+state_rate(FR,FR%V(i),FR%Psi(i),i,x(i),y(i),t)
        FR%DW(i) = FR%DW(i)+FR%S(i)*FR%V(i) ! work rate
+!       FR%DV(i) = FR%DV(i)
+!       FR%DSf(i) = FR%DSf(i)
        call rupture_front(FR,FR%D(i),FR%V(i),t,FR%trup(i))
     end do
 
@@ -919,7 +1041,7 @@ contains
     ! state evolution not required for some friction laws
 
     select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
+    case('frictionless','pseudodynamic','SW','RSLrate')
        DPsi = 0d0
        return
     end select
