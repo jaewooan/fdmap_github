@@ -635,8 +635,6 @@ contains
 
   subroutine ratestate_param(i,x,y,FR,rs)
 
-    use utilities, only : smooth_boxcar
-
     implicit none
 
     integer,intent(in) :: i
@@ -1028,7 +1026,7 @@ contains
 
   subroutine load_stress(FR,x,y,t,S0,N0)
 
-    use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step
+    use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step,smooth_boxcar
     use io, only : error
     use material, only : block_material
     use geometry, only : rotate_xy2nt
@@ -1064,6 +1062,8 @@ contains
           A = (xx-FR%ld%x0)/FR%ld%R
        case('boxcar')
           A = boxcar  (r,1d0,1d0,0d0)
+       case('smooth_boxcar')
+          A = smooth_boxcar(r,1d0,0.1d0,1d0,0d0)
        case('triangle')
           A = triangle(r,1d0,1d0,0d0)
        case('smooth')
