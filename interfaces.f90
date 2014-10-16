@@ -859,8 +859,8 @@ contains
         
     call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.)
 
-    snzp = phis
-    snzm = phis
+    snzp = FR%S(i)-FR%S0(i)
+    snzm = FR%S(i)-FR%S0(i)
     vzp = vzFDp+Zsip*(snzFDp-snzp)
     vzm = vzFDm-Zsim*(snzFDm-snzm)
 
