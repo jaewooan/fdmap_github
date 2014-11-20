@@ -26,7 +26,7 @@ ifeq ($(findstring Darwin,$(UNAME)),Darwin)
   F95FLAGS = -O5 -Wuninitialized
  endif
  LDFLAGS = $(F95FLAGS)
- LIBS = -framework vecLib
+ LIBS = -framework Accelerate
  INCL = -fall-intrinsics
 endif
 
