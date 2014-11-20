@@ -32,16 +32,16 @@ module friction
   end type load
 
   type :: fr_type
-     logical :: opening,force
+     logical :: opening,force,stress_file
      character(256) :: friction_law,problem,rup_field
-     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-     subduction_f0,subduction_N0,subduction_B
+     real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
      type(pseudodynamic) :: pd
      type(load) :: ld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0, &
+          S0_file,N0_file,DDs,DDn,W,DW
   end type fr_type
 
 
@@ -64,18 +64,17 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file
-    character(256) :: friction_law,problem,rup_field,filename
-    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-    subduction_f0,subduction_N0,subduction_B
+    logical :: opening,force,friction_file,stress_file
+    character(256) :: friction_law,problem,rup_field,filename,stress_filename
+    real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
     type(load) :: ld
 
-    namelist /friction_list/ opening,force,friction_law,problem,friction_file,filename, &
-         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-         subduction_f0,subduction_N0,subduction_B
+    namelist /friction_list/ opening,force,friction_law,problem, &
+         friction_file,filename,stress_file,stress_filename, &
+         Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock
 
     ! defaults
 
@@ -85,8 +84,9 @@ contains
     problem = ''
     friction_file = .false.
     filename = ''
+    stress_file = .false.
+    stress_filename = ''
     Psi0 = 0d0
-    S0 = 0d0
     angle = 0d0
     rs = ratestate_constant(0.01d0,0.014d0,1d-6,0.6d0,0.4d0,0.2d0,1d20)
     sw = slipweak_constant(0d0,1d0,0d0,1d0)
@@ -99,9 +99,6 @@ contains
     xlockm = -1d10
     xlockp = 1d10
     flock = 1d10
-    subduction_f0=0d0
-    subduction_N0=0d0
-    subduction_B=0d0
 
     ! read in friction parameters
 
@@ -114,7 +111,7 @@ contains
     FR%force = force
     FR%friction_law = friction_law
     FR%problem = problem
-    FR%f_S0 = S0
+    FR%stress_file = stress_file
     FR%angle = 0.017453292519943d0*angle ! convert deg to rad
     FR%kn = kn
     FR%ld = ld
@@ -125,9 +122,6 @@ contains
     FR%xlockm = xlockm
     FR%xlockp = xlockp
     FR%flock = flock
-    FR%subduction_f0 = subduction_f0
-    FR%subduction_N0 = subduction_N0
-    FR%subduction_B = subduction_B
 
     ! output friction parameters
     
@@ -140,10 +134,6 @@ contains
        call write_matlab(echo,'opening',FR%opening,FRstr)
        call write_matlab(echo,'force',FR%force,FRstr)
        call write_matlab(echo,'angle',FR%angle,FRstr)
-       call write_matlab(echo,'S0',FR%f_S0,FRstr)
-       call write_matlab(echo,'subduction_f0',FR%subduction_f0,FRstr)
-       call write_matlab(echo,'subduction_N0',FR%subduction_N0,FRstr)
-       call write_matlab(echo,'subduction_B',FR%subduction_B,FRstr)
 
        call write_matlab(echo,'xlockm',FR%xlockm,FRstr)
        call write_matlab(echo,'xlockp',FR%xlockp,FRstr)
@@ -260,6 +250,13 @@ contains
        if (process_p) call read_friction(FR,filename,comm_p,array)
     end if
 
+    if (stress_file) then
+       allocate(FR%S0_file(m:p),FR%N0_file(m:p))
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_stress(FR,stress_filename,comm_m,array)
+       if (process_p) call read_stress(FR,stress_filename,comm_p,array)
+    end if
+    
   end subroutine init_friction
 
 
@@ -285,6 +282,8 @@ contains
     if (allocated(FR%DDn )) deallocate(FR%DDn )
     if (allocated(FR%W   )) deallocate(FR%W   )
     if (allocated(FR%DW  )) deallocate(FR%DW  )
+    if (allocated(FR%S0_file)) deallocate(FR%S0_file)
+    if (allocated(FR%N0_file)) deallocate(FR%N0_file)
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -354,7 +353,31 @@ contains
 
   end subroutine read_friction
 
+  
+  subroutine read_stress(FR,filename,comm,array)
 
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%S0_file)
+    call read_file_distributed(fh,FR%N0_file)
+
+    call close_file_distributed(fh)
+
+  end subroutine read_stress
+
+  
   subroutine checkpoint_friction(fh,operation,FR)
 
     use io, only : file_distributed, &
@@ -460,7 +483,7 @@ contains
 
     ! loads (stresses acting on fault in absence of any slip)
 
-    call load_stress(FR,x,y,t,FR%S0(i),FR%N0(i))
+    call load_stress(FR,x,y,t,i,FR%S0(i),FR%N0(i))
 
     ! stress on fault in absence of active slipping and opening
 
@@ -1024,7 +1047,7 @@ contains
   end function coth
 
 
-  subroutine load_stress(FR,x,y,t,S0,N0)
+  subroutine load_stress(FR,x,y,t,i,S0,N0)
 
     use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step,smooth_boxcar
     use io, only : error
@@ -1035,6 +1058,7 @@ contains
 
     type(fr_type),intent(in) :: FR
     real,intent(in) :: x,y,t
+    integer,intent(in) :: i
     real,intent(out) :: S0,N0
 
     real :: r,A,B,xx,dip
@@ -1155,6 +1179,12 @@ contains
 
     end select
 
+    if (FR%stress_file) then
+       ! add additional prestress (that was input via stress file)
+       N0 = N0+FR%N0_file(i)
+       S0 = S0+FR%S0_file(i)
+    end if
+    
   end subroutine load_stress
 
 
