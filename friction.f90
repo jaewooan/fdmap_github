@@ -46,6 +46,7 @@ module friction
      type(pseudodynamic) :: pd
      type(load) :: ld
      real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW,Sf,DSf,DV
+
   end type fr_type
 
 
@@ -320,6 +321,7 @@ contains
     if (allocated(FR%DDn )) deallocate(FR%DDn )
     if (allocated(FR%W   )) deallocate(FR%W   )
     if (allocated(FR%DW  )) deallocate(FR%DW  )
+    if (allocated(FR%DV  )) deallocate(FR%DV  )
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -490,6 +492,7 @@ contains
     FR%DDn  = A*FR%DDn
     FR%DPsi = A*FR%DPsi
     FR%DW   = A*FR%DW
+    if (allocated(FR%DV )) FR%DV = A*FR%DV
 
     if (allocated(FR%DV)) then
        FR%DV   = A*FR%DV
@@ -511,6 +514,7 @@ contains
     FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
     FR%W   = FR%W  +dt*FR%DW
+    if (allocated(FR%DV )) FR%V = FR%V  +dt*FR%DV
 
 !    if (allocated(FR%DV)) then
 !       FR%V   = FR%V  +dt*FR%DV
@@ -559,6 +563,7 @@ contains
     real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
+
 
     ! loads (stresses acting on fault in absence of any slip)
 
@@ -998,7 +1003,6 @@ contains
 
   end subroutine estimate_V
 
-
   subroutine set_rates_friction(FR,m,p,x,y,t)
 
     implicit none
@@ -1006,7 +1010,7 @@ contains
     type(fr_type),intent(inout) :: FR
     integer,intent(in) :: m,p
     real,intent(in) :: x(m:p),y(m:p),t
-        
+
     integer :: i
 
     do i = m,p
@@ -1041,6 +1045,7 @@ contains
     ! state evolution not required for some friction laws
 
     select case(FR%friction_law)
+
     case('frictionless','pseudodynamic','SW','RSLrate')
        DPsi = 0d0
        return
