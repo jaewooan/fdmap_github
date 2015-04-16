@@ -719,7 +719,7 @@ contains
        if (dt==0d0) then
           S = FR%Sf(i)
           V = (Slock-S)/eta
-!          if (i==11) print *,'Hello1 ',S,' ',V,' ',Slock,' ',eta
+!          print *,'Hello1 ',S,' ',V,' ',Slock,' ',eta
           return
        end if
 !       if (i==11) print *,'Hello4 ',V,' ',dt
@@ -754,7 +754,7 @@ contains
        
 
 !    if (i==11) print *,'Hello4 ',absV,' ',N,' ',FR%Sf(i)
-    if (i==11) print *,'Hello5 ',FR%DSf(i),' ',FR%DV(i)
+!    print *,'Hello5 ',FR%DSf(i),' ',FR%DV(i)
     fv = rs%f0 - (rs%b-rs%a)*log(absV/rs%V0)
     alpha = rs%a*N/V*tanh(FR%Sf(i)/(rs%a*N))
     beta = -V/rs%L*(FR%Sf(i)-N*fv)
