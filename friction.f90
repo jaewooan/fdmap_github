@@ -46,7 +46,6 @@ module friction
      type(pseudodynamic) :: pd
      type(load) :: ld
      real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW,Sf,DSf,DV
-
   end type fr_type
 
 
@@ -492,7 +491,6 @@ contains
     FR%DDn  = A*FR%DDn
     FR%DPsi = A*FR%DPsi
     FR%DW   = A*FR%DW
-    if (allocated(FR%DV )) FR%DV = A*FR%DV
 
     if (allocated(FR%DV)) then
        FR%DV   = A*FR%DV
@@ -514,7 +512,6 @@ contains
     FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
     FR%W   = FR%W  +dt*FR%DW
-    if (allocated(FR%DV )) FR%V = FR%V  +dt*FR%DV
 
 !    if (allocated(FR%DV)) then
 !       FR%V   = FR%V  +dt*FR%DV
@@ -563,7 +560,6 @@ contains
     real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
-
 
     ! loads (stresses acting on fault in absence of any slip)
 
@@ -1002,6 +998,7 @@ contains
     end select
 
   end subroutine estimate_V
+
 
   subroutine set_rates_friction(FR,m,p,x,y,t)
 
