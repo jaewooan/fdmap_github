@@ -68,8 +68,8 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file,stress_file
-    character(256) :: friction_law,problem,rup_field,filename,stress_filename
+    logical :: opening,force,friction_file,stress_file,strength_file
+    character(256) :: friction_law,problem,rup_field,filename,stress_filename,strength_filename
     real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
@@ -79,7 +79,8 @@ contains
     namelist /friction_list/ opening,force,friction_law,problem,friction_file, &
                              filename,stress_file,stress_filename,S0,Psi0,     &
                              angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
-                             uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
+                             uni_dSdx,xlockm,xlockp,flock,skempton,Sf0,        &
+                             strength_file,strength_filename
 
     ! defaults
 
@@ -89,8 +90,10 @@ contains
     problem = ''
     friction_file = .false.
     stress_file   = .false.
+    strength_file = .false.
     filename = ''
     stress_filename = ''
+    strength_filename = ''
     Psi0 = 0d0
     S0 = 0d0
     angle = 0d0
@@ -294,6 +297,13 @@ contains
        if (process_p) call read_stress(FR,stress_filename,comm_p,array)
     end if
 
+    if (strength_file) then 
+       !print *, 'strength_file = T'
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_strength(FR,strength_filename,comm_m,array)
+       if (process_p) call read_strength(FR,strength_filename,comm_p,array)
+    end if
+
 
   end subroutine init_friction
 
@@ -419,6 +429,28 @@ contains
     call close_file_distributed(fh)
 
   end subroutine read_stress
+
+  subroutine read_strength(FR,strength_filename,comm,array)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: strength_filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,strength_filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%Sf)
+    
+    call close_file_distributed(fh)
+
+  end subroutine read_strength
 
   subroutine checkpoint_friction(fh,operation,FR)
 
