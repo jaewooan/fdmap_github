@@ -600,6 +600,7 @@ contains
     ! stress on fault in absence of active slipping and opening
 
     Slock = FR%S0(i)+phis
+!    if (dt==0) print *,'Slock = ',Slock,', phis = ',phis,', S0 = ',FR%S0(i),'i = ',i
     Nlock = FR%N0(i)-(1d0-FR%skempton)*phip
 
     ! fault normal stress and opening rate (no opening condition)
@@ -749,13 +750,13 @@ contains
        end if
 
     case('RSLrate') ! Rate form of slip law
-       if (dt==0d0) then
+       if (dt==0d0) then ! true for initial time step
           S = FR%Sf(i)
           V = (Slock-S)/eta
-!          print *,'Hello1 ',S,' ',V,' ',Slock,' ',eta
+!          print *,'Hello1 ',S,' ',V,' ',Slock,' ',eta,' ',i
           return
        end if
-!       if (i==11) print *,'Hello4 ',V,' ',dt
+!       if (i==1500) print *,'Hello4 ',V,' ',dt
        call solve_friction_rate_form(FR,V,S,N,Slock,eta,x,y,dt,i,rs)
 !       if (i==10) print *, 'Hello2 ', S, ' ', V, ' ', FR%Sf(i)
 
