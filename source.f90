@@ -166,8 +166,9 @@ contains
 
        !A = min(t/S%T,1d0) ! ramp in time
        !A = sqrt(t)
-       A = sin(2d0*pi*t/S%T) ! sinusoid
-             
+       !A = sin(2d0*pi*t/S%T) ! sinusoid
+       A = exp(-0.5d0*(t-4d0*S%T)**2/S%T**2) ! Gaussian source time function
+       
        do j = B%my,B%py
           do i = B%mx,B%px
              
@@ -176,10 +177,22 @@ contains
 
              select case(mode)
              case(2)
-                F%DF(i,j,1) = F%DF(i,j,1)+A*(S%Fx*dx*dy-S%Mxx*wx*dy-S%Mxy*dx*wy)/M%rho
-                F%DF(i,j,2) = F%DF(i,j,2)+A*(S%Fy*dx*dy-S%Mxy*wx*dy-S%Myy*dx*wy)/M%rho
+                ! effective body force approach
+                !F%DF(i,j,1) = F%DF(i,j,1)+A*(S%Fx*dx*dy-S%Mxx*wx*dy-S%Mxy*dx*wy)/M%rho
+                !F%DF(i,j,2) = F%DF(i,j,2)+A*(S%Fy*dx*dy-S%Mxy*wx*dy-S%Myy*dx*wy)/M%rho
+                F%DF(i,j,1) = F%DF(i,j,1)+A*S%Fx*dx*dy/M%rho
+                F%DF(i,j,2) = F%DF(i,j,2)+A*S%Fy*dx*dy/M%rho
+                ! transformation strain approach
+                F%DF(i,j,3) = F%DF(i,j,3)-A*S%Mxx*dx*dy
+                F%DF(i,j,4) = F%DF(i,j,4)-A*S%Mxy*dx*dy
+                F%DF(i,j,5) = F%DF(i,j,5)-A*S%Myy*dx*dy
              case(3)
-                F%DF(i,j,1) = F%DF(i,j,1)+A*(S%Fz*dx*dy-S%Mzx*wx*dy-S%Mzy*dx*wy)/M%rho
+                ! effective body force approach
+                !F%DF(i,j,1) = F%DF(i,j,1)+A*(S%Fz*dx*dy-S%Mzx*wx*dy-S%Mzy*dx*wy)/M%rho
+                F%DF(i,j,1) = F%DF(i,j,1)+A*S%Fz*dx*dy/M%rho
+                ! transformation strain approach
+                F%DF(i,j,2) = F%DF(i,j,2)-A*S%Mzx*dx*dy
+                F%DF(i,j,3) = F%DF(i,j,3)-A*S%Mzy*dx*dy
              end select
 
           end do
@@ -240,9 +253,31 @@ contains
     real,intent(in) :: h,a
     real,intent(out) :: d,w
 
+    real :: beta,gam,gap
+    
     ! d = delta function
     ! w = derivative of delta function
 
+    beta = (1d0-2d0*a)/4d0 + 0.25d0
+    gam = (2d0*a-1d0)/16d0
+    gap = (2d0*a+1d0)/16d0
+
+    if     (i==i0-2) then
+       d = (-gam)/h
+    elseif (i==i0-1) then
+       d = (beta+3d0*gam-gap)/h
+    elseif (i==i0  ) then
+       d = (1d0-a-2d0*beta-3d0*gam+3d0*gap)/h
+    elseif (i==i0+1) then
+       d = (a+beta+gam-3d0*gap)/h
+    elseif (i==i0+2) then
+       d = (gap)/h
+    else
+       d = 0d0
+    end if
+
+    w = 0d0
+    
 !!$    ! two point discretization
 !!$    if     (i==i0  ) then
 !!$       d = (1d0-a)/h
@@ -256,19 +291,19 @@ contains
 !!$    end if
 
     ! centered three point discretization, correct for w only with a/=0
-    if     (i==i0-1) then
-       d = 0d0
-       w = ( 1d0-2d0*a)/(2d0*h**2)
-    elseif (i==i0  ) then
-       d = 1d0/h
-       w = 2d0*a/h**2
-    elseif (i==i0+1) then
-       d = 0d0
-       w = (-1d0-2d0*a)/(2d0*h**2)
-    else
-       d = 0d0
-       w = 0d0
-    end if
+    !if     (i==i0-1) then
+    !   d = 0d0
+    !   w = ( 1d0-2d0*a)/(2d0*h**2)
+    !elseif (i==i0  ) then
+    !   d = 1d0/h
+    !   w = 2d0*a/h**2
+    !elseif (i==i0+1) then
+    !   d = 0d0
+    !   w = (-1d0-2d0*a)/(2d0*h**2)
+    !else
+    !   d = 0d0
+    !   w = 0d0
+    !end if
 
 
 !!$    ! four point discretization (orthogonal to pi mode)

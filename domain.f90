@@ -702,11 +702,11 @@ contains
           call write_file_distributed(fh,D%B(i)%G%bndL%x(my:py:sy))
        case('y')
           call write_file_distributed(fh,D%B(i)%G%bndL%y(my:py:sy))
-       case('ux')
+       case('ux','uz')
           call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFL%U(my:py:sy,2))
-       case('vx')
+       case('vx','vz')
           call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,1))
        case('vy')
           call write_file_distributed(fh,D%B(i)%F%bndFL%Fhat(my:py:sy,2))
@@ -727,11 +727,11 @@ contains
           call write_file_distributed(fh,D%B(i)%G%bndR%x(my:py:sy))
        case('y')
           call write_file_distributed(fh,D%B(i)%G%bndR%y(my:py:sy))
-       case('ux')
+       case('ux','uz')
           call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFR%U(my:py:sy,2))
-       case('vx')
+       case('vx','vz')
           call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,1))
        case('vy')
           call write_file_distributed(fh,D%B(i)%F%bndFR%Fhat(my:py:sy,2))
@@ -752,11 +752,11 @@ contains
           call write_file_distributed(fh,D%B(i)%G%bndB%x(mx:px:sx))
        case('y')
           call write_file_distributed(fh,D%B(i)%G%bndB%y(mx:px:sx))
-       case('ux')
+       case('ux','uz')
           call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFB%U(mx:px:sx,2))
-       case('vx')
+       case('vx','vz')
           call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,1))
        case('vy')
           call write_file_distributed(fh,D%B(i)%F%bndFB%Fhat(mx:px:sx,2))
@@ -777,11 +777,11 @@ contains
           call write_file_distributed(fh,D%B(i)%G%bndT%x(mx:px:sx))
        case('y')
           call write_file_distributed(fh,D%B(i)%G%bndT%y(mx:px:sx))
-       case('ux')
+       case('ux','uz')
           call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,1))
        case('uy')
           call write_file_distributed(fh,D%B(i)%F%bndFT%U(mx:px:sx,2))
-       case('vx')
+       case('vx','vz')
           call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,1))
        case('vy')
           call write_file_distributed(fh,D%B(i)%F%bndFT%Fhat(mx:px:sx,2))
@@ -1011,7 +1011,7 @@ contains
           ok = allocated(D%B(i)%G%bndL%x)
        case('y')
           ok = allocated(D%B(i)%G%bndL%y)
-       case('ux','uy','vx','vy','sxx','sxy','syy')
+       case('ux','uy','uz','vx','vy','vz','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -1024,7 +1024,7 @@ contains
           ok = allocated(D%B(i)%G%bndR%x)
        case('y')
           ok = allocated(D%B(i)%G%bndR%y)
-       case('ux','uy','vx','vy','sxx','sxy','syy')
+       case('ux','uy','uz','vx','vy','vz','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -1037,7 +1037,7 @@ contains
           ok = allocated(D%B(i)%G%bndB%x)
        case('y')
           ok = allocated(D%B(i)%G%bndB%y)
-       case('ux','uy','vx','vy','sxx','sxy','syy')
+       case('ux','uy','uz','vx','vz','vy','sxx','sxy','syy')
           ok = .true.
        end select
 
@@ -1050,7 +1050,7 @@ contains
           ok = allocated(D%B(i)%G%bndT%x)
        case('y')
           ok = allocated(D%B(i)%G%bndT%y)
-       case('ux','uy','vx','vy','sxx','sxy','syy')
+       case('ux','uy','uz','vx','vy','vz','sxx','sxy','syy')
           ok = .true.
        end select
 
