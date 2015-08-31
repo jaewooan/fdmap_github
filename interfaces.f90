@@ -517,7 +517,7 @@ contains
   end subroutine maxV
 
 
-  subroutine enforce_interface_conditions(I,Fm,Fp,C,mode,t)
+  subroutine enforce_interface_conditions(I,Fm,Fp,C,mode,t,dt)
 
     use fields, only : block_fields
     use mpi_routines2d, only : cartesian
@@ -530,7 +530,7 @@ contains
     type(block_fields),intent(inout) :: Fm,Fp
     type(cartesian),intent(in) :: C
     integer,intent(in) :: mode
-    real,intent(in) :: t
+    real,intent(in) :: t,dt
 
     real,dimension(:),allocatable :: phip,vnm,vnp,vtm,vtp,sntm,sntp
 
@@ -572,14 +572,14 @@ contains
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0,dt)
        case('y')
           call enforce_frictional_interface(I%m,I%p, &
                Fm%bndFT%Fhat(I%m:I%p, : ),Fp%bndFB%Fhat(I%m:I%p, : ), &
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
-               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0)
+               I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0,dt)
        end select
 
        ! set rates for auxiliary fields (like slip and state variables),
@@ -770,7 +770,7 @@ contains
   end subroutine locked_interface_mode2
 
 
-  subroutine enforce_frictional_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,FR,TP,F0)
+  subroutine enforce_frictional_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,FR,TP,F0,dt)
 
     use friction, only : fr_type
     use thermpres, only : tp_type
@@ -781,7 +781,7 @@ contains
     real,dimension(m:,:),intent(out) :: Fhatm,Fhatp
     real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
     real,dimension(m:p),intent(in) :: x,y
-    real,intent(in) :: t,F0(9)
+    real,intent(in) :: t,F0(9),dt
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
 
@@ -791,17 +791,17 @@ contains
        select case(mode)
        case(2)
           call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP)
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,dt)
        case(3)
           call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,TP,F0)
+               Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,TP,F0,dt)
        end select
     end do
     
   end subroutine enforce_frictional_interface
 
 
-  subroutine frictional_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,x,y,t,i,FR,TP,F0)
+  subroutine frictional_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,x,y,t,i,FR,TP,F0,dt)
 
     use geometry, only : rotate_xy2nt
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
@@ -811,7 +811,7 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(3),Fhatp(3)
-    real,intent(in) :: Fm(3),Fp(3),normal(2),Zsm,Zsp,x,y,t,F0(9)
+    real,intent(in) :: Fm(3),Fp(3),normal(2),Zsm,Zsp,x,y,t,F0(9),dt
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
@@ -857,7 +857,7 @@ contains
 
     ! solve for V,S,O,N by enforcing friction law and no opening
         
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snzp = FR%S(i)-FR%S0(i)
     snzm = FR%S(i)-FR%S0(i)
@@ -872,7 +872,7 @@ contains
   end subroutine frictional_interface_mode3
 
 
-  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP)
+  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,dt)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use friction, only : fr_type,solve_friction
@@ -881,7 +881,7 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(6),Fhatp(6)
-    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,dt
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
@@ -939,7 +939,7 @@ contains
 
     ! solve for V,S,O,N by enforcing friction law and no opening
 
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snnp = -(FR%N(i)-FR%N0(i))
     snnm = -(FR%N(i)-FR%N0(i))

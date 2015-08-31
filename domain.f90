@@ -333,7 +333,7 @@ contains
        call exchange_SAT_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
     end do
 
-    call enforce_edge_conditions(D)
+    call enforce_edge_conditions(D,0d0)
 
     deallocate(dtRK)
 
@@ -411,7 +411,7 @@ contains
   end subroutine prepare_edges
 
 
-  subroutine enforce_edge_conditions(D)
+  subroutine enforce_edge_conditions(D,Bdt)
     
     use boundaries, only : enforce_boundary_conditions
     use interfaces, only : enforce_interface_conditions
@@ -419,6 +419,7 @@ contains
     implicit none
 
     type(domain_type),intent(inout) :: D
+    real,intent(in) :: Bdt
 
     integer :: i,im,ip
 
@@ -436,7 +437,7 @@ contains
     do i = 1,D%nifaces
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
-       call enforce_interface_conditions(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t)
+       call enforce_interface_conditions(D%I(i),D%B(im)%F,D%B(ip)%F,D%C,D%mode,D%t,Bdt)
     end do
     
   end subroutine enforce_edge_conditions

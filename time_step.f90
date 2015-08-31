@@ -106,7 +106,7 @@ contains
        ! also, set rates on interfaces
 
        call prepare_edges(D)
-       call enforce_edge_conditions(D)
+       call enforce_edge_conditions(D,RK%B(stage)*dt)
        
        ! set rates (except interfaces)
 
