@@ -482,9 +482,9 @@ contains
        call read_file_distributed(fh,FR%DDn)
        call read_file_distributed(fh,FR%W)
        call read_file_distributed(fh,FR%DW)
-       call read_file_distributed(fh,FR%Sf)
-       call read_file_distributed(fh,FR%DSf)
-       call read_file_distributed(fh,FR%DV)
+       if (allocated(FR%Sf )) call read_file_distributed(fh,FR%Sf)
+       if (allocated(FR%DSf)) call read_file_distributed(fh,FR%DSf)
+       if (allocated(FR%DV )) call read_file_distributed(fh,FR%DV)
     case('write')
        call write_file_distributed(fh,FR%D)
        call write_file_distributed(fh,FR%Psi)
@@ -502,9 +502,9 @@ contains
        call write_file_distributed(fh,FR%DDn)
        call write_file_distributed(fh,FR%W)
        call write_file_distributed(fh,FR%DW)
-       call write_file_distributed(fh,FR%Sf)
-       call write_file_distributed(fh,FR%DSf)
-       call write_file_distributed(fh,FR%DV)
+       if (allocated(FR%Sf )) call write_file_distributed(fh,FR%Sf)
+       if (allocated(FR%DSf)) call write_file_distributed(fh,FR%DSf)
+       if (allocated(FR%DV )) call write_file_distributed(fh,FR%DV)
     end select
 
   end subroutine checkpoint_friction
@@ -546,7 +546,7 @@ contains
   end subroutine update_fields_friction
 
 
-  subroutine solve_friction(FR,V,S,O,N,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
+  subroutine solve_friction(FR,V,S,O,N,N0,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
 
     use mms, only : bessel,inplane_fault_mms
     use io, only : error
@@ -557,8 +557,10 @@ contains
     ! V = slip velocity
     ! S = shear stress
     ! O = opening rate
-    ! N = eff normal stress
-    ! phip,phis = stress transfer for normal, shear components
+    ! N = effective normal stress
+    ! N0 = effective normal prestress
+    ! phip = stress transfer for normal stress (does not include prestress)
+    ! phis = stress transfer for shear stress (does include prestress)
     ! eta = shear radiation damping
     ! D = slip (integral of absolute value of slip velocity)
     ! Psi = state variable
@@ -569,7 +571,7 @@ contains
 
     type(fr_type),intent(inout) :: FR
     real,intent(inout) :: V,S,O,N
-    real,intent(in) :: phip,phis,eta,D,Psi,x,y,t,dt
+    real,intent(in) :: N0,phip,phis,eta,D,Psi,x,y,t,dt
     integer,intent(in) :: i
     logical,intent(in) :: info
 
@@ -594,7 +596,7 @@ contains
     ! stress on fault in absence of active slipping and opening
 
     Slock = FR%S0(i)+phis
-    Nlock = FR%N0(i)-(1d0-FR%skempton)*phip
+    Nlock = N0+FR%N0(i)-(1d0-FR%skempton)*phip ! poroelastic effect applies only to stress change
 
     ! fault normal stress and opening rate (no opening condition)
 

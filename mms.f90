@@ -11,7 +11,7 @@ contains
 
   function bessel(x,y,t,side,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
 
     implicit none
 
@@ -76,7 +76,7 @@ contains
 
   function inplane_bessel(x,y,t,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
     use material, only : block_material
     use io, only : error
 
@@ -177,7 +177,7 @@ contains
 
   function inplane_fault_mms(x,y,t,iblock,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
     use material, only : block_material
     use io, only : error
 
@@ -222,7 +222,7 @@ contains
 
   function mms_sin(x,y,t,side,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
     use io, only : error
 
     implicit none
@@ -407,7 +407,7 @@ contains
 
   function mms_simple(x,y,t,side,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
 
     implicit none
 
@@ -534,7 +534,7 @@ contains
 
   function mms_hydrofrac(x,y,t,side,field) result(F)
 
-    use ifport ! for Intel Fortran compiler
+    !use ifport ! for Intel Fortran compiler
 
     implicit none
 

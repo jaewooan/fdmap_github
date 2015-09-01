@@ -791,7 +791,7 @@ contains
        select case(mode)
        case(2)
           call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,dt)
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,F0,dt)
        case(3)
           call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
                Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,TP,F0,dt)
@@ -819,7 +819,7 @@ contains
     real :: Zsim,Zsip,phis,etas, &
          vzp,snzp,vzFDp,snzFDp,stzFDp, &
          vzm,snzm,vzFDm,snzFDm,stzFDm
-    real :: stt,snt,snn,p,phip
+    real :: stt,snt,snn,p,phip,N0
 
     ! 1. snzp+Zsp*vzp = snzFDp+Zsp*vzFDp 
     !    (S-wave into interface from plus  side)
@@ -844,7 +844,10 @@ contains
 
     etas = 1d0/(Zsip+Zsim)
     phis = etas*(snzFDp*Zsip+snzFDm*Zsim+vzFDp-vzFDm)
-
+    ! note that as defined, phis includes prestress since snzFD does not have
+    ! prestress subtracted out -- this is fine provided the traction components
+    ! of prestress are continuous across the interface
+    
     ! normal stress contribution from resolving in-plane stress field onto fault
 
     call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
@@ -853,11 +856,13 @@ contains
 
     p = 0d0
     call pressure_thermpres(TP,i,p)
-    phip = snn+p
+    N0 = -snn-p
+    phip = 0d0
+    ! here prestress-pore pressure is N0 and phip is only the stress transfer (0 for mode 3)
 
     ! solve for V,S,O,N by enforcing friction law and no opening
         
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snzp = FR%S(i)-FR%S0(i)
     snzm = FR%S(i)-FR%S0(i)
@@ -872,8 +877,9 @@ contains
   end subroutine frictional_interface_mode3
 
 
-  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,dt)
+  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,F0,dt)
 
+    use geometry, only : rotate_xy2nt
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use friction, only : fr_type,solve_friction
     use thermpres, only : tp_type,pressure_thermpres
@@ -881,7 +887,7 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(6),Fhatp(6)
-    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,dt
+    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,F0(9),dt
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
@@ -889,7 +895,7 @@ contains
     real :: Zsim,Zsip,Zpim,Zpip,phis,phip,etas,etap, &
          vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
          vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real :: p
+    real :: stt0,snt0,snn0,p,N0
 
     ! 1. sntp+Zsp*vtp = sntFDp+Zsp*vtFDp 
     !    (S-wave into interface from plus  side)
@@ -918,6 +924,10 @@ contains
     call rotate_fields_xy2nt(Fp,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
     call rotate_fields_xy2nt(Fm,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
 
+    ! normal stress contribution from prestress
+
+    call rotate_xy2nt(F0(4),F0(5),F0(7),stt0,snt0,snn0,normal)
+    
     ! balance tractions and define stress transfer terms phis and phip
 
     Zsip = 1d0/Zsp
@@ -935,11 +945,15 @@ contains
 
     p = 0d0
     call pressure_thermpres(TP,i,p)
-    phip = phip+p
+
+    ! separate effective normal stress into prestress and stress transfer
+
+    N0 = -snn0-p ! include pore pressure change here (so won't be subject to Skempton reduction)
+    phip = phip-snn0 ! subtract out prestress
 
     ! solve for V,S,O,N by enforcing friction law and no opening
 
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snnp = -(FR%N(i)-FR%N0(i))
     snnm = -(FR%N(i)-FR%N0(i))
