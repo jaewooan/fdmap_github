@@ -570,6 +570,7 @@ contains
           call enforce_frictional_interface(I%m,I%p, &
                Fm%bndFR%Fhat(I%m:I%p, : ),Fp%bndFL%Fhat(I%m:I%p, : ), &
                Fm%bndFR%F   (I%m:I%p, : ),Fp%bndFL%F   (I%m:I%p, : ), &
+               Fm%bndFR%F0  (I%m:I%p, : ),Fp%bndFL%F0  (I%m:I%p, : ), &
                Fm%bndFR%M   (I%m:I%p,1:3),Fp%bndFL%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
                I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0,dt)
@@ -577,6 +578,7 @@ contains
           call enforce_frictional_interface(I%m,I%p, &
                Fm%bndFT%Fhat(I%m:I%p, : ),Fp%bndFB%Fhat(I%m:I%p, : ), &
                Fm%bndFT%F   (I%m:I%p, : ),Fp%bndFB%F   (I%m:I%p, : ), &
+               Fm%bndFT%F0  (I%m:I%p, : ),Fp%bndFB%F0  (I%m:I%p, : ), &
                Fm%bndFT%M   (I%m:I%p,1:3),Fp%bndFB%M   (I%m:I%p,1:3), &
                I%nhat(I%m:I%p,:),mode, &
                I%x(I%m:I%p),I%y(I%m:I%p),t,I%FR,I%TP,Fp%F0,dt)
@@ -770,7 +772,7 @@ contains
   end subroutine locked_interface_mode2
 
 
-  subroutine enforce_frictional_interface(m,p,Fhatm,Fhatp,Fm,Fp,Mm,Mp,nhat,mode,x,y,t,FR,TP,F0,dt)
+  subroutine enforce_frictional_interface(m,p,Fhatm,Fhatp,Fm,Fp,F0m,F0p,Mm,Mp,nhat,mode,x,y,t,FR,TP,F0,dt)
 
     use friction, only : fr_type
     use thermpres, only : tp_type
@@ -779,7 +781,7 @@ contains
 
     integer,intent(in) :: m,p,mode
     real,dimension(m:,:),intent(out) :: Fhatm,Fhatp
-    real,dimension(m:,:),intent(in) :: Fm,Fp,Mm,Mp,nhat
+    real,dimension(m:,:),intent(in) :: Fm,Fp,F0m,F0p,Mm,Mp,nhat
     real,dimension(m:p),intent(in) :: x,y
     real,intent(in) :: t,F0(9),dt
     type(fr_type),intent(inout) :: FR
@@ -790,10 +792,10 @@ contains
     do i = m,p
        select case(mode)
        case(2)
-          call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
-               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,F0,dt)
+          call frictional_interface_mode2(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),F0m(i,:),F0p(i,:),nhat(i,:), &
+               Mm(i,1),Mp(i,1),Mm(i,2),Mp(i,2),Mm(i,3),Mp(i,3),x(i),y(i),t,i,FR,TP,dt)
        case(3)
-          call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),nhat(i,:), &
+          call frictional_interface_mode3(Fhatm(i,:),Fhatp(i,:),Fm(i,:),Fp(i,:),F0m(i,:),F0p(i,:),nhat(i,:), &
                Mm(i,1),Mp(i,1),x(i),y(i),t,i,FR,TP,F0,dt)
        end select
     end do
@@ -801,7 +803,7 @@ contains
   end subroutine enforce_frictional_interface
 
 
-  subroutine frictional_interface_mode3(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,x,y,t,i,FR,TP,F0,dt)
+  subroutine frictional_interface_mode3(Fhatm,Fhatp,Fm,Fp,F0m,F0p,normal,Zsm,Zsp,x,y,t,i,FR,TP,F0,dt)
 
     use geometry, only : rotate_xy2nt
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
@@ -811,15 +813,15 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(3),Fhatp(3)
-    real,intent(in) :: Fm(3),Fp(3),normal(2),Zsm,Zsp,x,y,t,F0(9),dt
+    real,intent(in) :: Fm(3),Fp(3),F0m(3),F0p(3),normal(2),Zsm,Zsp,x,y,t,F0(9),dt
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
 
     real :: Zsim,Zsip,phis,etas, &
-         vzp,snzp,vzFDp,snzFDp,stzFDp, &
-         vzm,snzm,vzFDm,snzFDm,stzFDm
-    real :: stt,snt,snn,p,phip,N0
+         vzp,snzp,vzFDp,snzFDp,stzFDp,vz0p,snz0p,stz0p, &
+         vzm,snzm,vzFDm,snzFDm,stzFDm,vz0m,snz0m,stz0m
+    real :: stt,snt,snn,p,phip,S0,N0
 
     ! 1. snzp+Zsp*vzp = snzFDp+Zsp*vzFDp 
     !    (S-wave into interface from plus  side)
@@ -834,8 +836,15 @@ contains
 
     ! rotate into local normal and tangential coordinates
 
-    call rotate_fields_xy2nt(Fp,normal,vzFDp,stzFDp,snzFDp)
-    call rotate_fields_xy2nt(Fm,normal,vzFDm,stzFDm,snzFDm)
+    ! prestress
+
+    call rotate_fields_xy2nt(F0p,normal,vz0p,stz0p,snz0p)
+    call rotate_fields_xy2nt(F0m,normal,vz0m,stz0m,snz0m)
+    
+    ! stress changes carried by waves
+
+    call rotate_fields_xy2nt(Fp-F0p,normal,vzFDp,stzFDp,snzFDp)
+    call rotate_fields_xy2nt(Fm-F0m,normal,vzFDm,stzFDm,snzFDm)
 
     ! balance tractions and define stress transfer term phis
 
@@ -844,25 +853,31 @@ contains
 
     etas = 1d0/(Zsip+Zsim)
     phis = etas*(snzFDp*Zsip+snzFDm*Zsim+vzFDp-vzFDm)
-    ! note that as defined, phis includes prestress since snzFD does not have
-    ! prestress subtracted out -- this is fine provided the traction components
-    ! of prestress are continuous across the interface
+
+    ! shear prestress
+
+    S0 = stz0p ! = stz0m (this stress component is continuous across interface)
     
-    ! normal stress contribution from resolving in-plane stress field onto fault
+    ! effective normal stress contribution from resolving in-plane prestress field onto fault
 
     call rotate_xy2nt(F0(4),F0(5),F0(7),stt,snt,snn,normal)
 
-    ! reduction of effective normal stress from pore pressure
+    ! pore pressure change from thermal pressurization
 
     p = 0d0
     call pressure_thermpres(TP,i,p)
-    N0 = -snn-p
-    phip = 0d0
-    ! here prestress-pore pressure is N0 and phip is only the stress transfer (0 for mode 3)
 
-    ! solve for V,S,O,N by enforcing friction law and no opening
+    ! effective normal stress (N0>0 in compression) is prestress minus pore pressure
+
+    N0 = -snn-p
+
+    ! stress transfer is zero for antiplane shear
+
+    phip = 0d0
+
+    ! solve for V,S,O,N by enforcing friction law
         
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snzp = FR%S(i)-FR%S0(i)
     snzm = FR%S(i)-FR%S0(i)
@@ -873,13 +888,17 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vzp,stzFDp,snzp)
     call rotate_fields_nt2xy(Fhatm,normal,vzm,stzFDm,snzm)
+
+    ! add prestress
+
+    Fhatp = Fhatp+F0p
+    Fhatm = Fhatm+F0m
     
   end subroutine frictional_interface_mode3
 
 
-  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,F0,dt)
+  subroutine frictional_interface_mode2(Fhatm,Fhatp,Fm,Fp,F0p,F0m,normal,Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,i,FR,TP,dt)
 
-    use geometry, only : rotate_xy2nt
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
     use friction, only : fr_type,solve_friction
     use thermpres, only : tp_type,pressure_thermpres
@@ -887,15 +906,16 @@ contains
     implicit none
 
     real,intent(out) :: Fhatm(6),Fhatp(6)
-    real,intent(in) :: Fm(6),Fp(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,F0(9),dt
+    real,intent(in) :: Fm(6),Fp(6),F0m(6),F0p(6),normal(2),Zsm,Zsp,Zpm,Zpp,gammam,gammap,x,y,t,dt
     integer,intent(in) :: i
     type(fr_type),intent(inout) :: FR
     type(tp_type),intent(in) :: TP
 
     real :: Zsim,Zsip,Zpim,Zpip,phis,phip,etas,etap, &
          vnp,vtp,snnp,sntp,sttp,szzp,vnFDp,vtFDp,snnFDp,sntFDp,sttFDp,szzFDp, &
-         vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm
-    real :: stt0,snt0,snn0,p,N0
+         vnm,vtm,snnm,sntm,sttm,szzm,vnFDm,vtFDm,snnFDm,sntFDm,sttFDm,szzFDm, &
+         vn0p,vt0p,snn0p,snt0p,stt0p,szz0p,vn0m,vt0m,snn0m,snt0m,stt0m,szz0m
+    real :: p,S0,N0
 
     ! 1. sntp+Zsp*vtp = sntFDp+Zsp*vtFDp 
     !    (S-wave into interface from plus  side)
@@ -921,12 +941,15 @@ contains
 
     ! rotate into local normal and tangential coordinates
 
-    call rotate_fields_xy2nt(Fp,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
-    call rotate_fields_xy2nt(Fm,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
+    ! prestress
+    
+    call rotate_fields_xy2nt(F0p,normal,vt0p,vn0p,stt0p,snt0p,snn0p,szz0p)
+    call rotate_fields_xy2nt(F0m,normal,vt0m,vn0m,stt0m,snt0m,snn0m,szz0m)
 
-    ! normal stress contribution from prestress
+    ! stress changes carried by waves
 
-    call rotate_xy2nt(F0(4),F0(5),F0(7),stt0,snt0,snn0,normal)
+    call rotate_fields_xy2nt(Fp-F0p,normal,vtFDp,vnFDp,sttFDp,sntFDp,snnFDp,szzFDp)
+    call rotate_fields_xy2nt(Fm-F0m,normal,vtFDm,vnFDm,sttFDm,sntFDm,snnFDm,szzFDm)
     
     ! balance tractions and define stress transfer terms phis and phip
 
@@ -941,22 +964,25 @@ contains
     etap = 1d0/(Zpip+Zpim)
     phip = etap*(snnFDp*Zpip+snnFDm*Zpim+vnFDp-vnFDm)
 
-    ! reduction of effective normal stress from pore pressure
+    ! shear prestress
+
+    S0 = snt0p ! = snt0m (this stress component is continuous across interface)
+    
+    ! pore pressure change from thermal pressurization
 
     p = 0d0
     call pressure_thermpres(TP,i,p)
 
-    ! separate effective normal stress into prestress and stress transfer
+    ! effective normal stress (N0>0 in compression) is prestress minus pore pressure
 
-    N0 = -snn0-p ! include pore pressure change here (so won't be subject to Skempton reduction)
-    phip = phip-snn0 ! subtract out prestress
+    N0 = -snn0p-p
 
     ! solve for V,S,O,N by enforcing friction law and no opening
 
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
-    snnp = -(FR%N(i)-FR%N0(i)-N0)
-    snnm = -(FR%N(i)-FR%N0(i)-N0)
+    snnp = -(FR%N(i)-FR%N0(i))/(1d0-FR%skempton)
+    snnm = -(FR%N(i)-FR%N0(i))/(1d0-FR%skempton)
 
     vnp = vnFDp+Zpip*(snnFDp-snnp)
     vnm = vnFDm-Zpim*(snnFDm-snnm)
@@ -977,6 +1003,11 @@ contains
 
     call rotate_fields_nt2xy(Fhatp,normal,vtp,vnp,sttp,sntp,snnp,szzp)
     call rotate_fields_nt2xy(Fhatm,normal,vtm,vnm,sttm,sntm,snnm,szzm)
+
+    ! add prestress
+
+    Fhatp = Fhatp+F0p
+    Fhatm = Fhatm+F0m
     
   end subroutine frictional_interface_mode2
 

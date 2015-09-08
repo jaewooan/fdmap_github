@@ -400,6 +400,7 @@ contains
 
   end subroutine read_friction
 
+  
   subroutine read_stress(FR,filename,comm,array)
 
     use io, only : file_distributed,open_file_distributed, &
@@ -543,7 +544,7 @@ contains
   end subroutine update_fields_friction
 
 
-  subroutine solve_friction(FR,V,S,O,N,N0,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
+  subroutine solve_friction(FR,V,S,O,N,S0,N0,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
 
     use mms, only : bessel,inplane_fault_mms
     use io, only : error
@@ -555,7 +556,9 @@ contains
     ! S = shear stress
     ! O = opening rate
     ! N = effective normal stress
-    ! N0 = effective normal prestress
+    ! S0 = shear stress, contribution from prestress in body
+    ! N0 = effective normal stress, contribution from prestress in body
+    !      and pore pressure change from thermal pressurization
     ! phip = stress transfer for normal stress (does not include prestress)
     ! phis = stress transfer for shear stress (does include prestress)
     ! eta = shear radiation damping
@@ -568,7 +571,7 @@ contains
 
     type(fr_type),intent(inout) :: FR
     real,intent(inout) :: V,S,O,N
-    real,intent(in) :: N0,phip,phis,eta,D,Psi,x,y,t,dt
+    real,intent(in) :: S0,N0,phip,phis,eta,D,Psi,x,y,t,dt
     integer,intent(in) :: i
     logical,intent(in) :: info
 
@@ -586,14 +589,24 @@ contains
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
 
-    ! loads (stresses acting on fault in absence of any slip)
-
+    ! calculate Slock and Nlock, stresses on fault in absence of active slipping and opening
+    
+    ! contribution from loads directly applied to fault
+    
     call load_stress(FR,x,y,t,i,FR%S0(i),FR%N0(i))
 
-    ! stress on fault in absence of active slipping and opening
+    ! add contributions from prestress in medium (and pore pressure change from thermal pressurization,
+    ! which is captured in N0)
+    
+    FR%S0(i) = FR%S0(i)+S0
+    FR%N0(i) = FR%N0(i)+N0
+
+    ! additional contributions from stress change carried by waves are phip and phis
+    
+    ! now add contributions together, taking into account poroelastic fault zone effects
 
     Slock = FR%S0(i)+phis
-    Nlock = N0+FR%N0(i)-(1d0-FR%skempton)*phip ! poroelastic effect applies only to stress change
+    Nlock = FR%N0(i)-(1d0-FR%skempton)*phip ! poroelastic effect applies only to stress change
 
     ! fault normal stress and opening rate (no opening condition)
 
