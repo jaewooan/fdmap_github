@@ -955,8 +955,8 @@ contains
 
     call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
-    snnp = -(FR%N(i)-FR%N0(i))
-    snnm = -(FR%N(i)-FR%N0(i))
+    snnp = -(FR%N(i)-FR%N0(i)-N0)
+    snnm = -(FR%N(i)-FR%N0(i)-N0)
 
     vnp = vnFDp+Zpip*(snnFDp-snnp)
     vnm = vnFDm-Zpim*(snnFDm-snnm)
