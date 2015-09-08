@@ -36,7 +36,7 @@ module friction
   end type load
 
   type :: fr_type
-     logical :: opening,force
+     logical :: force
      character(256) :: friction_law,problem,rup_field
      real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
      type(background_stress) :: bs
@@ -68,7 +68,7 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file,stress_file,strength_file
+    logical :: force,friction_file,stress_file,strength_file
     character(256) :: friction_law,problem,rup_field,filename,stress_filename,strength_filename
     real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
     type(ratestate_constant) :: rs
@@ -76,7 +76,7 @@ contains
     type(kinematic) :: kn
     type(load) :: ld
 
-    namelist /friction_list/ opening,force,friction_law,problem,friction_file, &
+    namelist /friction_list/ force,friction_law,problem,friction_file, &
                              filename,stress_file,stress_filename,Psi0,     &
                              angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
                              uni_dSdx,xlockm,xlockp,flock,skempton,Sf0,        &
@@ -84,7 +84,6 @@ contains
 
     ! defaults
 
-    opening = .true.
     force = .false.
     friction_law = 'frictionless'
     problem = ''
@@ -117,7 +116,6 @@ contains
     read(input,nml=friction_list,iostat=stat)
     if (stat>0) call error('Error in friction_list','init_friction')
 
-    FR%opening = opening
     FR%force = force
     FR%friction_law = friction_law
     FR%problem = problem
@@ -141,7 +139,6 @@ contains
 
        call write_matlab(echo,'friction_law',FR%friction_law,FRstr)
        call write_matlab(echo,'problem',FR%problem,FRstr)
-       call write_matlab(echo,'opening',FR%opening,FRstr)
        call write_matlab(echo,'force',FR%force,FRstr)
        call write_matlab(echo,'angle',FR%angle,FRstr)
 
