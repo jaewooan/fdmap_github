@@ -105,7 +105,7 @@ contains
        ! enforce boundary and interface conditions (set hat variables)
        ! also, set rates on interfaces
 
-       call prepare_edges(D)
+       call prepare_edges(D,initialize=.false.)
        call enforce_edge_conditions(D,RK%B(stage)*dt)
        
        ! set rates (except interfaces)

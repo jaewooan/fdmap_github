@@ -323,7 +323,9 @@ contains
 
     ! enforce boundary and interface conditions (set hat variables)
 
-    call prepare_edges(D)
+    ! exchange fields on edges
+    
+    call prepare_edges(D,initialize=.true.)
 
     ! initialize interfaces (SAT)
 
@@ -391,12 +393,13 @@ contains
   end subroutine finish_domain
 
 
-  subroutine prepare_edges(D)
+  subroutine prepare_edges(D,initialize)
 
     implicit none
 
     type(domain_type),intent(inout) :: D
-
+    logical,intent(in) :: initialize
+    
     integer :: i,im,ip
     
     do i = 1,D%nblocks
@@ -406,6 +409,7 @@ contains
        im = D%I(i)%iblockm
        ip = D%I(i)%iblockp
        call exchange_fields_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
+       if (initialize) call exchange_initial_fields_edges(D%I(i),D%C,D%B(im)%F,D%B(ip)%F)
     end do
 
   end subroutine prepare_edges
@@ -1106,6 +1110,42 @@ contains
     end select
 
   end subroutine exchange_fields_edges
+
+
+  subroutine exchange_initial_fields_edges(I,C,Fm,Fp)
+
+    use fields, only : block_fields
+    use mpi_routines2d,only : cartesian,exchange_edge
+
+    implicit none
+
+    type(iface_type),intent(in) :: I
+    type(cartesian),intent(in) :: C
+    type(block_fields),intent(inout) :: Fm,Fp
+
+    integer :: l,nF
+
+    if (.not.I%share) return ! no need to share fields
+
+    ! initialize arrays in blocks not handled by process
+    ! with values from neighboring process
+
+    select case(I%direction)
+    case('x')
+       nF = size(Fm%bndFR%F0,2)
+       do l = 1,nF
+          call exchange_edge(C,I%m,I%p,Fm%bndFR%F0(I%m:I%p,l),Fp%bndFL%F0(I%m:I%p,l), &
+               I%rank_m,I%rank_p,'x')
+       end do
+    case('y')
+       nF = size(Fm%bndFT%F0,2)
+       do l = 1,nF
+          call exchange_edge(C,I%m,I%p,Fm%bndFT%F0(I%m:I%p,l),Fp%bndFB%F0(I%m:I%p,l), &
+               I%rank_m,I%rank_p,'y')
+       end do
+    end select
+
+  end subroutine exchange_initial_fields_edges
 
 
   subroutine exchange_grid_edges(I,C,Gm,Gp)
