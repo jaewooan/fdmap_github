@@ -40,6 +40,7 @@ contains
 
     logical :: file
     character(256) :: filename
+    integer :: stat
     real :: H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
 
     namelist /basal_traction_list/ filename,H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
@@ -116,7 +117,7 @@ contains
 
     character(*),intent(in) :: operation,filename
     type(cartesian),intent(in) :: C
-    type(bt_type),intent(inout) :: E
+    type(bt_type),intent(inout) :: BT
 
     type(file_distributed) :: fh
     integer :: ierr
@@ -195,36 +196,36 @@ contains
     implicit none
 
     type(cartesian),intent(in) :: C
-    type(fields_type),intent(in) :: F
+    type(fields_type),intent(inout) :: F
     type(bt_type),intent(inout) :: BT
     integer,intent(in) :: mode
 
     integer :: i,j
-    real :: f,fss,Sx,Sy
+    real :: frs,fss,Sx,Sy,V
     
     select case(mode)
     case(2)
        do j = C%my,C%py
           do i = C%mx,C%px
-             BT%V(i,j) = sqrt(F%F(i,j,1)**2+F%F(i,j,2)**2) ! slip velocity
-             if (BT%a(i,j)==0d0.or.BT%V(i,j)==0d0) then
+             V = sqrt(F%F(i,j,1)**2+F%F(i,j,2)**2) ! slip velocity
+             if (BT%a(i,j)==0d0.or.V==0d0) then
                 ! constant friction
-                f = BT%f0(i,j)
+                frs = BT%f0(i,j)
                 fss = BT%f0(i,j)
              else
                 ! rate-and-state friction
-                f = BT%a(i,j)*arcsinh(0.5d0*BT%V(i,j)/BT%V0(i,j)*exp(BT%Psi(i,j)/BT%a(i,j)))
-                fss = BT%f0(i,j)-(BT%b(i,j)-BT%a(i,j))*log(BT%V(i,j)/BT%V0(i,j))
+                frs = BT%a(i,j)*arcsinh(0.5d0*V/BT%V0(i,j)*exp(BT%Psi(i,j)/BT%a(i,j)))
+                fss = BT%f0(i,j)-(BT%b(i,j)-BT%a(i,j))*log(V/BT%V0(i,j))
              end if
-             BT%S(i,j) = BT%N(i,j)*f ! shear strength
+             BT%S(i,j) = BT%N(i,j)*frs ! shear strength
              ! align strength with slip velocity (Vx=F%F(i,j,1),Vy=F%F(i,j,2))
-             Sx = BT%S(i,j)*F%F(i,j,1)/BT%V(i,j)
-             Sy = BT%S(i,j)*F%F(i,j,2)/BT%V(i,j)
+             Sx = BT%S(i,j)*F%F(i,j,1)/V
+             Sy = BT%S(i,j)*F%F(i,j,2)/V
              ! add basal traction (but only perturbation from initial traction)
              F%DF(i,j,1) = F%DF(i,j,1)-(Sx-BT%Sx0(i,j))/BT%H(i,j)
              F%DF(i,j,2) = F%DF(i,j,2)-(Sy-BT%Sy0(i,j))/BT%H(i,j)
              ! state evolution
-             BT%DPsi(i,j) = BT%DPsi(i,j)-BT%V(i,j)/BT%L(i,j)*(f-fss)
+             BT%DPsi(i,j) = BT%DPsi(i,j)-V/BT%L(i,j)*(frs-fss)
           end do
        end do
     case(3)
