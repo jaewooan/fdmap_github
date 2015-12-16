@@ -7,7 +7,8 @@ module domain
   use interfaces, only : iface_type
   use mpi_routines2d, only : cartesian
   use source, only : source_type
-
+  use boundary_traction, only : bt_type
+  
   implicit none
 
   type :: block_type
@@ -20,7 +21,7 @@ module domain
   end type block_type
 
   type :: domain_type
-     logical :: operator_split,exact_metric
+     logical :: operator_split,exact_metric,boundary_traction_plane_stress
      integer :: mode,nblocks_x,nblocks_y,nblocks,nifaces,n
      character(10) :: FDmethod
      character(16) :: method
@@ -32,6 +33,7 @@ module domain
      type(fields_type) :: F
      type(cartesian) :: C
      type(source_type) :: S
+     type(bt_type) :: BT
   end type domain_type
 
 
@@ -46,7 +48,8 @@ contains
     use interfaces, only : init_iface,init_iface_blocks,init_iface_fields
     use boundaries, only : init_boundaries
     use fd_coeff, only : init_fd
-    use source , only : init_source
+    use source, only : init_source
+    use boundary_traction, only : init_boundary_traction
     use mpi_routines2d, only : decompose2d,exchange_all_neighbors
     use mpi_routines, only : is_master
     use io, only : error,write_matlab,message,messages,seek_to_string
@@ -71,12 +74,13 @@ contains
     character(10) :: FDmethod
     character(6) :: mpi_method
     character(256) :: str1,str2,str3,str
-    logical :: operator_split,decomposition_info,energy_balance,displacement,peak,exact_metric
+    logical :: operator_split,decomposition_info,energy_balance,displacement,peak, &
+         boundary_traction_plane_stress,exact_metric
     logical,parameter :: periodic_x=.false.,periodic_y=.false.
 
     namelist /domain_list/ mode,FDmethod,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,mpi_method,nprocs_x,nprocs_y,decomposition_info,operator_split, &
-         energy_balance,displacement,exact_metric,peak,nx_list,ny_list
+         energy_balance,displacement,exact_metric,peak,boundary_traction_plane_stress,nx_list,ny_list
 
     namelist /operator_list/ Cdiss
 
@@ -100,7 +104,8 @@ contains
     energy_balance = .false.
     displacement   = .false.
     peak           = .false.
-
+    boundary_traction_plane_stress = .false.
+    
     mpi_method = '2d'
     nprocs_x = 1
     nprocs_y = 1
@@ -138,10 +143,11 @@ contains
 
     D%operator_split = operator_split
 
+    D%boundary_traction_plane_stress = boundary_traction_plane_stress
+    
     ! initial time
 
     D%t = t
-
 
     ! allocate memory for each block and interface
 
@@ -189,8 +195,6 @@ contains
     ! Set grid indices (mgx,mgy,iblock_x,iblock_y) for all blocks
     call set_grid_indices(D%B,nblocks_x,nblocks_y)
 
-    
-
     do i = 1,D%nblocks
        call set_refine(i,D%B(i)%G,refine)
     end do
@@ -205,7 +209,6 @@ contains
     do i = 1,D%nblocks
        call write_grid(i,D%B(i)%G,echo)
     end do
-
 
     ! MPI decomposition of global 2D domain
 
@@ -291,6 +294,10 @@ contains
 
     call init_source(D%S,input,echo)
 
+    ! boundary tractions for plane stress model
+
+    if (D%boundary_traction_plane_stress) call init_boundary_traction(D%BT,D%C,input,echo)
+    
     ! time step and CFL parameter
 
     call set_dt(D,refine,CFL,dt)
@@ -367,7 +374,8 @@ contains
     use fields, only : destroy_block_fields,destroy_fields
     use material, only : destroy_elastic
     use interfaces, only : destroy_iface
-
+    use boundary_traction, only : destroy_boundary_traction
+    
     implicit none
 
     type(domain_type),intent(inout) :: D
@@ -389,6 +397,7 @@ contains
 
     call destroy_fields(D%F)
     call destroy_elastic(D%E)
+    call destroy_boundary_traction(D%BT)
 
   end subroutine finish_domain
 
@@ -1433,6 +1442,7 @@ contains
     end if
 
   end subroutine set_dt
+
   
   subroutine set_grid_indices(B,nblocks_x,nblocks_y)
 
@@ -1477,6 +1487,7 @@ contains
 
   end subroutine
 
+  
   ! Set global nx and ny taking refinement into consideration
   subroutine set_grid(D)
 
@@ -1537,13 +1548,11 @@ contains
           D%B(ix + (iy - 1)*D%nblocks_x)%G%nx = nx_list(ix)
           D%B(ix + (iy - 1)*D%nblocks_x)%G%ny = ny_list(iy)
         end do
-      end do
-
-
-
-
+     end do
+     
   end subroutine
 
+  
   ! Get a list of interface neighbors for each interface
   subroutine get_iface_neighbors(D,Im,Ip,dir)
 
@@ -1579,7 +1588,7 @@ contains
 
       dir(offset+1:D%nifaces) = 'y'
 
- end subroutine
+    end subroutine get_iface_neighbors
 
 
 end module domain

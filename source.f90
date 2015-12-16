@@ -133,14 +133,14 @@ contains
        case(2)
           do j = B%my,B%py
              do i = B%mx,B%px
-                F%DF(:,:,1) = F%DF(:,:,1)+S%gx
-                F%DF(:,:,2) = F%DF(:,:,2)+S%gy
+                F%DF(i,j,1) = F%DF(i,j,1)+S%gx
+                F%DF(i,j,2) = F%DF(i,j,2)+S%gy
              end do
           end do
        case(3)
           do j = B%my,B%py
              do i = B%mx,B%px
-                F%DF(:,:,1) = F%DF(:,:,1)+S%gz
+                F%DF(i,j,1) = F%DF(i,j,1)+S%gz
              end do
           end do
        end select
