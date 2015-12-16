@@ -168,7 +168,7 @@ contains
     use fields, only : scale_rates_interior,scale_rates_boundary
     use interfaces, only : scale_rates_iface
     use energy, only : scale_rates_energy
-    use boundary_traction, only : scale_rates_boundary_traction
+    use basal_traction, only : scale_rates_basal_traction
     
     implicit none
 
@@ -195,9 +195,9 @@ contains
        call scale_rates_boundary(D%B(i)%G,D%B(i)%F,A)
     end do
 
-    ! multiply boundary traction rate by RK coefficient A
+    ! multiply basal traction rate by RK coefficient A
 
-    if (D%boundary_traction_plane_stress) call scale_rates_boundary_traction(D%BT,A)
+    if (D%basal_traction_plane_stress) call scale_rates_basal_traction(D%BT,A)
     
   end subroutine scale_rates_all
 
@@ -208,7 +208,7 @@ contains
     use energy, only : set_rates_energy
     use fields, only : set_rates_boundary,set_rates_displacement
     use source, only : set_source
-    use boundary_traction, only : set_boundary_traction
+    use basal_traction, only : set_basal_traction
     
     implicit none
 
@@ -245,7 +245,7 @@ contains
        call set_source(D%B(i)%G,D%G,D%F,D%B(i)%M,D%S,D%t,D%mode,i)
     end do
 
-    if (D%boundary_traction_plane_stress) call set_boundary_traction(D%C,D%F,D%BT,D%mode)
+    if (D%basal_traction_plane_stress) call set_basal_traction(D%C,D%F,D%BT,D%mode)
     
     ! energy dissipation and boundary displacement rates
     
@@ -263,7 +263,7 @@ contains
     use fields, only : update_fields_interior,update_fields_boundary
     use interfaces, only : update_fields_iface
     use energy, only : update_energy
-    use boundary_traction, only : update_fields_boundary_traction
+    use basal_traction, only : update_fields_basal_traction
     
     implicit none
 
@@ -290,9 +290,9 @@ contains
        call update_fields_boundary(D%B(i)%G,D%B(i)%F,Bdt)
     end do
 
-    ! update boundary traction fields for plane stress model
+    ! update basal traction fields for plane stress model
 
-    if (D%boundary_traction_plane_stress) call update_fields_boundary_traction(D%BT,Bdt)
+    if (D%basal_traction_plane_stress) call update_fields_basal_traction(D%BT,Bdt)
        
   end subroutine update_fields_all
 

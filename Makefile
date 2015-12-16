@@ -91,7 +91,7 @@ endif
 
 # Files
 
-Files = boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
+Files = basal_traction.f90 boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
 	interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
 	geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
 	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \

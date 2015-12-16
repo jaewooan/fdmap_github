@@ -42,7 +42,7 @@ contains
     character(256) :: filename
     real :: H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
 
-    namelist /boundary_traction_list/ filename,H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
+    namelist /basal_traction_list/ filename,H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
     
     ! default parameters (spatially uniform)
 
@@ -186,7 +186,7 @@ contains
   end subroutine destroy_basal_traction
 
 
-  subroutine set_boundary_traction(C,F,BT,mode)
+  subroutine set_basal_traction(C,F,BT,mode)
     
     use mpi_routines2d, only : cartesian
     use fields, only : fields_type
@@ -228,13 +228,13 @@ contains
           end do
        end do
     case(3)
-       call error('basal traction not valid in mode 3','set_boundary_traction')
+       call error('basal traction not valid in mode 3','set_basal_traction')
     end select
 
-  end subroutine set_boundary_traction
+  end subroutine set_basal_traction
 
 
-  subroutine scale_rates_boundary_traction(BT,A)
+  subroutine scale_rates_basal_traction(BT,A)
 
     implicit none
 
@@ -243,10 +243,10 @@ contains
     
     BT%DPsi = A*BT%DPsi
     
-  end subroutine scale_rates_boundary_traction
+  end subroutine scale_rates_basal_traction
 
 
-  subroutine update_fields_boundary_traction(BT,dt)
+  subroutine update_fields_basal_traction(BT,dt)
 
     implicit none
 
@@ -255,7 +255,7 @@ contains
     
     BT%Psi = BT%Psi+dt*BT%DPsi
     
-  end subroutine update_fields_boundary_traction
+  end subroutine update_fields_basal_traction
 
   
   elemental function arcsinh(x) result(f)
