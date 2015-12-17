@@ -225,6 +225,7 @@ contains
                 Sx = BT%S(i,j)*F%F(i,j,1)/V
                 Sy = BT%S(i,j)*F%F(i,j,2)/V
              end if
+             if (i==51.and.j==51) print *, V,BT%S(i,j),frs
              ! add basal traction (but only perturbation from initial traction)
              F%DF(i,j,1) = F%DF(i,j,1)-(Sx-BT%Sx0(i,j))/BT%H(i,j)
              F%DF(i,j,2) = F%DF(i,j,2)-(Sy-BT%Sy0(i,j))/BT%H(i,j)

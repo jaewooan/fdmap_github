@@ -593,6 +593,8 @@ contains
           call write_file_distributed(fh,D%BT%Psi(mx:px:sx,my:py:sy))
        case('S')
           call write_file_distributed(fh,D%BT%S(mx:px:sx,my:py:sy))
+       case('N')
+          call write_file_distributed(fh,D%BT%N(mx:px:sx,my:py:sy))
        end select
 
     case('ifacex','point_ifacex')
@@ -983,6 +985,8 @@ contains
           ok = allocated(D%BT%Psi)
        case('S')
           ok = allocated(D%BT%S)
+       case('N')
+          ok = allocated(D%BT%N)
        end select
 
     case('ifacex','point_ifacex','ifacey','point_ifacey')
