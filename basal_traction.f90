@@ -38,7 +38,6 @@ contains
     type(cartesian),intent(in) :: C
     integer,intent(in) :: input,echo
 
-    logical :: file
     character(256) :: filename
     integer :: stat
     real :: H,N,Sx0,Sy0,a,b,V0,f0,L,Psi
@@ -219,8 +218,13 @@ contains
              end if
              BT%S(i,j) = BT%N(i,j)*frs ! shear strength
              ! align strength with slip velocity (Vx=F%F(i,j,1),Vy=F%F(i,j,2))
-             Sx = BT%S(i,j)*F%F(i,j,1)/V
-             Sy = BT%S(i,j)*F%F(i,j,2)/V
+             if (V==0d0) then
+                Sx = 0d0
+                Sy = 0d0
+             else
+                Sx = BT%S(i,j)*F%F(i,j,1)/V
+                Sy = BT%S(i,j)*F%F(i,j,2)/V
+             end if
              ! add basal traction (but only perturbation from initial traction)
              F%DF(i,j,1) = F%DF(i,j,1)-(Sx-BT%Sx0(i,j))/BT%H(i,j)
              F%DF(i,j,2) = F%DF(i,j,2)-(Sy-BT%Sy0(i,j))/BT%H(i,j)
