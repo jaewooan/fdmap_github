@@ -168,6 +168,7 @@ contains
     use fields, only : scale_rates_interior,scale_rates_boundary
     use interfaces, only : scale_rates_iface
     use energy, only : scale_rates_energy
+    use acoustic_gravity, only : scale_rates_acoustic_gravity
     use basal_traction, only : scale_rates_basal_traction
     
     implicit none
@@ -195,6 +196,10 @@ contains
        call scale_rates_boundary(D%B(i)%G,D%B(i)%F,A)
     end do
 
+    ! multiply acoustic gravity waves rate by RK coefficient A
+
+    if (D%acoustic_gravity_waves) call scale_rates_acoustic_gravity(D%AG,A)
+    
     ! multiply basal traction rate by RK coefficient A
 
     if (D%basal_traction_plane_stress) call scale_rates_basal_traction(D%BT,A)
@@ -208,6 +213,7 @@ contains
     use energy, only : set_rates_energy
     use fields, only : set_rates_boundary,set_rates_displacement
     use source, only : set_source
+    use acoustic_gravity, only : set_rates_acoustic_gravity
     use basal_traction, only : set_basal_traction
     
     implicit none
@@ -245,6 +251,8 @@ contains
        call set_source(D%B(i)%G,D%G,D%F,D%B(i)%M,D%S,D%t,D%mode,i)
     end do
 
+    if (D%acoustic_gravity_waves) call set_rates_acoustic_gravity(D%C,D%F,D%AG,D%mode)
+    
     if (D%basal_traction_plane_stress) call set_basal_traction(D%C,D%F,D%BT,D%mode)
     
     ! energy dissipation and boundary displacement rates
@@ -263,6 +271,7 @@ contains
     use fields, only : update_fields_interior,update_fields_boundary
     use interfaces, only : update_fields_iface
     use energy, only : update_energy
+    use acoustic_gravity, only : update_fields_acoustic_gravity
     use basal_traction, only : update_fields_basal_traction
     
     implicit none
@@ -290,6 +299,10 @@ contains
        call update_fields_boundary(D%B(i)%G,D%B(i)%F,Bdt)
     end do
 
+    ! update acoustic gravity wave fields
+
+    if (D%acoustic_gravity_waves) call update_fields_acoustic_gravity(D%AG,Bdt)
+    
     ! update basal traction fields for plane stress model
 
     if (D%basal_traction_plane_stress) call update_fields_basal_traction(D%BT,Bdt)
