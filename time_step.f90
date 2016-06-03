@@ -251,7 +251,7 @@ contains
        call set_source(D%B(i)%G,D%G,D%F,D%B(i)%M,D%S,D%t,D%mode,i)
     end do
 
-    if (D%acoustic_gravity_waves) call set_rates_acoustic_gravity(D%C,D%F,D%AG,D%mode)
+    if (D%acoustic_gravity_waves) call set_rates_acoustic_gravity(D%C,D%F,D%E,D%AG,D%mode)
     
     if (D%basal_traction_plane_stress) call set_basal_traction(D%C,D%F,D%BT,D%mode)
     

@@ -22,7 +22,7 @@ module domain
   end type block_type
 
   type :: domain_type
-     logical :: operator_split,exact_metric,basal_traction_plane_stress
+     logical :: operator_split,exact_metric,basal_traction_plane_stress,acoustic_gravity_waves
      integer :: mode,nblocks_x,nblocks_y,nblocks,nifaces,n
      character(10) :: FDmethod
      character(16) :: method

@@ -10,7 +10,8 @@ module acoustic_gravity
   ! DRHO0DY = d/dy of background density
   
   type :: ag_type
-     real,dimension(:,:),allocatable :: rhoprime,Drhoprime,g,drho0dy
+     real :: g
+     real,dimension(:,:),allocatable :: rhoprime,Drhoprime,drho0dy
   end type ag_type
 
 contains
@@ -40,12 +41,14 @@ contains
     g = 0d0
     drho0dy = 0d0
     
-    ! read in basal traction parameters
+    ! read in acoustic gravity wave parameters
 
     rewind(input)
     read(input,nml=acoustic_gravity_list,iostat=stat)
     if (stat>0) call error('Error in acoustic_gravity_list','init_acoustic_gravity')
 
+    AG%g = g
+    
     ! output acoustic-gravity-wave parameters
     ! (but only if uniform <==> filename=='')
     
@@ -81,7 +84,7 @@ contains
 
     character(*),intent(in) :: operation,filename
     type(cartesian),intent(in) :: C
-    type(bt_type),intent(inout) :: AG
+    type(ag_type),intent(inout) :: AG
 
     type(file_distributed) :: fh
     integer :: ierr
@@ -115,7 +118,7 @@ contains
 
     implicit none
 
-    type(bt_type),intent(inout) :: AG
+    type(ag_type),intent(inout) :: AG
 
     if (allocated(AG%drho0dy  )) deallocate(AG%drho0dy)
     if (allocated(AG%rhoprime )) deallocate(AG%rhoprime)
@@ -124,10 +127,11 @@ contains
   end subroutine destroy_acoustic_gravity
 
 
-  subroutine set_rates_acoustic_gravity(C,F,AG,mode)
+  subroutine set_rates_acoustic_gravity(C,F,E,AG,mode)
     
     use mpi_routines2d, only : cartesian
     use fields, only : fields_type
+    use material, only : elastic_type
     use io, only : error
     
     implicit none
@@ -135,25 +139,35 @@ contains
     type(cartesian),intent(in) :: C
     type(fields_type),intent(inout) :: F
     type(ag_type),intent(inout) :: AG
+    type(elastic_type),intent(in) :: E
     integer,intent(in) :: mode
 
     integer :: i,j
     
     select case(mode)
     case(2)
+       ! F(:,:,1) = vx
+       ! F(:,:,2) = vy
+       ! F(:,:,3) = sxx
+       ! F(:,:,4) = sxy
+       ! F(:,:,5) = syy
+       ! DF = d/dt of F
+       ! low storage RK method requires DF = DF + new rate, not DF = new rate
        do j = C%my,C%py
           do i = C%mx,C%px
-             ! vertical momentum equation
-             F%DF(i,j,2) = F%DF(i,j,2)-AG%rhoprime*AG%g
+             ! vertical momentum equation (update vy)
+             F%DF(i,j,2) = F%DF(i,j,2)-AG%rhoprime(i,j)*AG%g/E%rho(i,j)
              ! normal stress (= -pressure) equation
              !  F(:,:,3) = sxx stress = -pressure
              ! DF(:,:,3) = d/dt of sxx stress = d/dt of -pressure
              !  F(:,:,5) = syy stress = -pressure
              ! DF(:,:,5) = d/dt of syy stress = d/dt of -pressure
-             F%DF(i,j,3) = F%DF(i,j,3)!+ADD TERMS
-             F%DF(i,j,5) = F%DF(i,j,5)!+ADD TERMS
+             F%DF(i,j,3) = F%DF(i,j,3)-E%rho(i,j)*AG%g*F%F(i,j,2)
+             F%DF(i,j,5) = F%DF(i,j,5)-E%rho(i,j)*AG%g*F%F(i,j,2)
              ! density perturbation equation
-             BT%Drhoprime(i,j) = BT%Drhoprime(i,j)!+ADD TERMS
+             AG%Drhoprime(i,j) = AG%Drhoprime(i,j)- &
+                  0.5d0/E%cp(i,j)**2*(F%DF(i,j,3)+F%DF(i,j,5))- &
+                  (E%rho(i,j)*AG%g/E%cp(i,j)**2+AG%drho0dy(i,j))*F%F(i,j,2)
           end do
        end do
     case(3)
