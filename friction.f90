@@ -787,11 +787,17 @@ contains
     absV = abs(V)
 
     fv = rs%f0 - (rs%b-rs%a)*log(absV/rs%V0)
-    if (rs%a*max(N,0d0)/FR%Sf(i) < 1d-16) then 
-       alpha = rs%a*max(N,0d0)/V
+
+    if ( abs(rs%a*max(N,0d0)/FR%Sf(i)) < 1d-20 ) then 
+       if ( FR%Sf(i) > 0 ) then
+          alpha = rs%a*max(N,0d0)/V
+       else
+          alpha = -rs%a*max(N,0d0)/V
+       end if
     else
        alpha = rs%a*max(N,0d0)/V*tanh( FR%Sf(i)/(rs%a*max(N,0d0)) )
     end if
+
     beta = -absV/rs%L*( FR%Sf(i)-max(N,0d0)*sign(fv,FR%Sf(i)) )
 
     V = (Slock-FR%Sf(i)-dt*FR%DSf(i)+V*alpha+dt*alpha*FR%DV(i)-dt*beta)/(alpha+eta)
