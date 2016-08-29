@@ -64,7 +64,6 @@ contains
     use utilities, only : deg2rad
     use fd, only : limits,Hnorm
     use material, only : block_material
-    use mms, only : besselA
 
     implicit none
 
@@ -89,7 +88,7 @@ contains
 
     namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
-         P1,P2,P3,P4,P5,besselA
+         P1,P2,P3,P4,P5
 
     ! defaults
 
@@ -113,8 +112,6 @@ contains
     P3 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
     P4 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
     P5 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
-
-    besselA = 0d0
 
     ! read in field parameters
 
@@ -781,8 +778,7 @@ contains
 
     use utilities, only : step
     use material, only : block_material
-    use mms, only : &
-    bessel,inplane_bessel,inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
+    use mms, only : inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
 
     implicit none
 
@@ -793,20 +789,6 @@ contains
     type(block_material), intent(in) :: M
 
     select case(problem)
-    case('bessel')
-       ! verification using method of manufactured solutions
-       ! (with bessel function solution in interior)
-       ! mode III only
-       F(1) = F(1)+bessel(x,y,t,iblock,'vz')
-       F(2) = F(2)+bessel(x,y,t,iblock,'sxz')
-       F(3) = F(3)+bessel(x,y,t,iblock,'syz')
-    case('inplane-bessel')
-       F(1) = F(1)+inplane_bessel(x,y,t,'vx')
-       F(2) = F(2)+inplane_bessel(x,y,t,'vy')
-       F(3) = F(3)+inplane_bessel(x,y,t,'sxx')
-       F(4) = F(4)+inplane_bessel(x,y,t,'sxy')
-       F(5) = F(5)+inplane_bessel(x,y,t,'syy')
-       F(6) = F(6)+inplane_bessel(x,y,t,'szz')
     case('inplane-fault-mms','inplane-fault-mms-nostate')
        F(1) = F(1)+inplane_fault_mms(x,y,t,iblock,'vx')
        F(2) = F(2)+inplane_fault_mms(x,y,t,iblock,'vy')
@@ -823,7 +805,6 @@ contains
        F(6) = 0d0
     case('gaussian')
        ! verification using method of manufactured solutions
-       ! (with bessel function solution in interior)
        ! mode III only
        F(1) = F(1)+100d0*exp(-sqrt((x-0d0)**2 + (y+150d0)**2)/2.5d0)
        F(2) = F(2)+100d0*exp(-sqrt((x-0d0)**2 + (y+150d0)**2)/2.5d0)

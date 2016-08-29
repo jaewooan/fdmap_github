@@ -124,14 +124,6 @@ $(IOExe): $(IOObs)
 clean:
 	rm -f *.o *.mod $(Exe) $(IOExe)
 
-intel:
-	sed 's/!use ifport/use ifport/g' mms.f90 > temp.f90 && \
-	mv temp.f90 mms.f90
-
-notintel:
-	sed 's/ use ifport/ !use ifport/g' mms.f90 > temp.f90 && \
-	mv temp.f90 mms.f90
-
 .SUFFIXES: .o .f90
 
 # DO NOT DELETE THIS LINE - used by make depend
@@ -141,8 +133,8 @@ boundaries.o: fields.o geometry.o grid.o io.o mms.o mpi_routines.o tsunami.o
 
 checkpoint.o: domain.o fields.o interfaces.o io.o mpi_routines.o
 
-domain.o: basal_traction.o boundaries.o fd_coeff.o fields.o grid.o interfaces.o io.o
-domain.o: material.o mpi_routines.o mpi_routines2d.o source.o utilities.o
+domain.o: basal_traction.o boundaries.o fd_coeff.o fields.o grid.o interfaces.o
+domain.o: io.o material.o mpi_routines.o mpi_routines2d.o source.o utilities.o
 
 energy.o: domain.o fields.o geometry.o grid.o material.o mpi_routines.o
 energy.o: mpi_routines2d.o
@@ -192,9 +184,9 @@ testio.o: io.o mpi_routines.o mpi_routines2d.o
 
 thermpres.o: io.o mpi_routines.o
 
-time_step.o: basal_traction.o domain.o energy.o fields.o grid.o interfaces.o io.o
-time_step.o: material.o mpi_routines2d.o output.o plastic.o rates.o rates_heterogeneous.o
-time_step.o: source.o
+time_step.o: basal_traction.o domain.o energy.o fields.o grid.o interfaces.o
+time_step.o: io.o material.o mpi_routines2d.o output.o plastic.o rates.o
+time_step.o: rates_heterogeneous.o source.o
 
 
 utilities.o: io.o
