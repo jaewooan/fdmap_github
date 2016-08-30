@@ -925,7 +925,7 @@ contains
   end subroutine initial_fields
 
 
-  subroutine initial_stress(s,x,y,s0,problem,mode)
+  subroutine initial_stress(s,x,y,s0,problem,mode,s0_file)
 
     ! used only by plasticity routines
 
@@ -937,8 +937,7 @@ contains
     real,intent(in) :: x,y,s0(6)
     character(*),intent(in) :: problem
     integer,intent(in) :: mode
-
-    real :: dip
+    real,intent(in),optional :: s0_file(:)
 
     ! sxx  sxy  sxz  syy  syz  szz
     ! s(1) s(2) s(3) s(4) s(5) s(6)
@@ -963,6 +962,20 @@ contains
        end select
     end select
 
+    ! add prestress that was input in file
+    if (present(s0_file)) then
+       select case(mode)
+       case(2)
+          s(1) = s(1)+s0_file(1) ! sxx
+          s(2) = s(2)+s0_file(2) ! sxy
+          s(4) = s(4)+s0_file(3) ! syy
+          s(6) = s(6)+s0_file(4) ! szz
+       case(3)
+          s(3) = s(3)+s0_file(1) ! sxz
+          s(5) = s(5)+s0_file(2) ! syz
+       end select
+    end if
+    
   end subroutine initial_stress
 
 
