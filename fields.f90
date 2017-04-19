@@ -311,7 +311,7 @@ contains
   end subroutine destroy_bnd_fields
 
 
-  subroutine checkpoint_fields(operation,name,checkpoint_number,C,F)
+  subroutine checkpoint_fields(operation,name,checkpoint_number,C,F,adjoint,mode)
 
     use io, only : file_distributed,open_file_distributed, &
          read_file_distributed,write_file_distributed,close_file_distributed
@@ -322,9 +322,10 @@ contains
     implicit none
 
     character(*),intent(in) :: operation,name
-    integer,intent(in) :: checkpoint_number
+    integer,intent(in) :: checkpoint_number,mode
     type(cartesian),intent(in) :: C
     type(fields_type),intent(inout) :: F
+    logical,intent(in) :: adjoint
 
     type(file_distributed) :: fh
     character(256) :: filename
@@ -387,6 +388,17 @@ contains
          do l = 1,F%nEP
            call write_file_distributed(fh,F%EP(C%mx:C%px,C%my:C%py,l))
          end do
+       end if
+
+      if (adjoint) then
+
+       select case(mode)
+          case(2)
+             F%F(:,:,1:2) = -F%F(:,:,1:2)
+          case(3)
+             F%F(:,:,1) = -F%F(:,:,1)
+          end select
+
        end if
     end select
 

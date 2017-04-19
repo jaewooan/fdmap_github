@@ -27,7 +27,7 @@ module checkpoint
 contains
 
 
-  subroutine init_checkpoint(name,C,input,nstart)
+  subroutine init_checkpoint(name,C,input,nstart,adjoint)
 
     use io, only : message,error,new_io_unit
     use mpi_routines, only : is_master,master,MPI_REAL_PW
@@ -39,18 +39,20 @@ contains
     integer,intent(in) :: input
     type(checkpoint_type),intent(out) :: C
     integer,intent(out) :: nstart
+    logical,intent(out) :: adjoint
 
     logical :: ckpt,resume,del_final
     integer :: stat,begin,interval,ierr
     real :: max_time
 
-    namelist /checkpoint_list/ ckpt,resume,begin,interval,max_time,del_final
+    namelist /checkpoint_list/ ckpt,resume,begin,interval,max_time,del_final,adjoint
 
     ! defaults
 
     ckpt = .false.
     resume = .false.
     del_final = .true.
+    adjoint = .false.
     begin = 0
     interval = 1
     max_time = 1d40
@@ -65,6 +67,7 @@ contains
     C%begin = begin
     C%interval = interval
     C%max_time = max_time
+!    C%adjoint = adjoint
 
     ! open checkpoint number file (master only)
     ! if resuming from last checkpoint, determine its number (supersedes value from input file)
@@ -142,7 +145,7 @@ contains
   end function abort_now
 
 
-  subroutine checkpoint_read(name,C,D)
+  subroutine checkpoint_read(name,C,D,adjoint,mode)
 
     use domain, only : domain_type
     use io, only : message
@@ -153,6 +156,8 @@ contains
     character(*),intent(in) :: name
     type(checkpoint_type),intent(in) :: C
     type(domain_type),intent(inout) :: D
+    logical,intent(in) :: adjoint
+    integer,intent(in) :: mode
 
     character(128) :: str
 
@@ -164,12 +169,12 @@ contains
     write(str,'(a,i0)') '...reading  checkpoint at time step ',C%begin
     if (is_master) call message(str)
 
-    call checkpoint_op('read',name,C%begin,D)
+    call checkpoint_op('read',name,C%begin,D,adjoint,mode)
 
   end subroutine checkpoint_read
 
 
-  subroutine checkpoint_write_delete(name,number,C,D,abort)
+  subroutine checkpoint_write_delete(name,number,C,D,abort,adjoint,mode)
 
     use domain, only : domain_type
     use io, only : message
@@ -178,10 +183,10 @@ contains
     implicit none
 
     character(*),intent(in) :: name
-    integer,intent(in) :: number
+    integer,intent(in) :: number,mode
     type(checkpoint_type),intent(inout) :: C
     type(domain_type),intent(inout) :: D
-    logical,intent(in) :: abort
+    logical,intent(in) :: abort,adjoint
 
     character(256) :: str
 
@@ -196,7 +201,7 @@ contains
     write(str,'(a,i0)') '...writing  checkpoint at time step ',number
     if (is_master) call message(str)
     
-    call checkpoint_op('write',name,number,D)
+    call checkpoint_op('write',name,number,D,adjoint,mode)
 
     if (is_master) then
        rewind(C%unit)
@@ -210,7 +215,7 @@ contains
   end subroutine checkpoint_write_delete
 
 
-  subroutine checkpoint_delete(name,C,D,final)
+  subroutine checkpoint_delete(name,C,D,final,adjoint,mode)
 
     use domain, only : domain_type
     use io, only : message
@@ -221,7 +226,8 @@ contains
     character(*),intent(in) :: name
     type(checkpoint_type),intent(in) :: C
     type(domain_type),intent(inout) :: D
-    logical,intent(in),optional :: final
+    logical,intent(in),optional :: final,adjoint
+    integer,intent(in),optional :: mode
 
     character(256) :: str
 
@@ -233,7 +239,7 @@ contains
     write(str,'(a,i0)') '...deleting checkpoint at time step ',C%previous
     if (is_master) call message(str)
 
-    call checkpoint_op('delete',name,C%previous,D)
+    call checkpoint_op('delete',name,C%previous,D,adjoint,mode)
 
     if (present(final)) then
        if (final.and.is_master) then
@@ -245,7 +251,7 @@ contains
   end subroutine checkpoint_delete
 
 
-  subroutine checkpoint_op(operation,name,number,D)
+  subroutine checkpoint_op(operation,name,number,D,adjoint,mode)
 
     use domain, only : domain_type
     use interfaces, only : checkpoint_iface
@@ -255,14 +261,15 @@ contains
     implicit none
 
     character(*),intent(in) :: operation,name
-    integer,intent(in) :: number
+    integer,intent(in) :: number,mode
     type(domain_type),intent(inout) :: D
+    logical,intent(in) :: adjoint
 
     integer :: i
 
     select case(operation)
     case('read','write','delete')
-       call checkpoint_fields(operation,name,number,D%C,D%F)
+       call checkpoint_fields(operation,name,number,D%C,D%F,adjoint,mode)
        do i = 1,D%nblocks
           call checkpoint_block_fields(operation,name,number,i,D%B(i)%G,D%B(i)%F,D%F)
        end do
