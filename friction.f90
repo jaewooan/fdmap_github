@@ -10,6 +10,10 @@ module friction
      real :: c0,fs,fd,Dc
   end type slipweak_constant
 
+  type :: background_stress
+     real,dimension(:),allocatable :: N0, S0
+  end type background_stress
+
   type :: ratestate
      real,dimension(:),allocatable :: a,b,V0,f0,L,fw,Vw
   end type ratestate
@@ -32,16 +36,16 @@ module friction
   end type load
 
   type :: fr_type
-     logical :: opening,force
+     logical :: force
      character(256) :: friction_law,problem,rup_field
-     real :: Psi0,f_S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-     subduction_f0,subduction_N0,subduction_B
+     real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
+     type(background_stress) :: bs
      type(ratestate) :: rs
      type(slipweak) :: sw
      type(kinematic) :: kn
      type(pseudodynamic) :: pd
      type(load) :: ld
-     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn
+     real,dimension(:),allocatable :: D,Psi,DPsi,trup,Ds,Dn,F,V,O,S,N,S0,N0,DDs,DDn,W,DW,Sf,DSf,DV
   end type fr_type
 
 
@@ -64,29 +68,32 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: opening,force,friction_file
-    character(256) :: friction_law,problem,rup_field,filename
-    real :: Psi0,S0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-    subduction_f0,subduction_N0,subduction_B
+    logical :: force,friction_file,stress_file,strength_file
+    character(256) :: friction_law,problem,rup_field,filename,stress_filename,strength_filename
+    real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
     type(kinematic) :: kn
     type(load) :: ld
 
-    namelist /friction_list/ opening,force,friction_law,problem,friction_file,filename, &
-         S0,Psi0,angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock, &
-         subduction_f0,subduction_N0,subduction_B
+    namelist /friction_list/ force,friction_law,problem,friction_file, &
+                             filename,stress_file,stress_filename,Psi0,     &
+                             angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
+                             uni_dSdx,xlockm,xlockp,flock,skempton,Sf0,        &
+                             strength_file,strength_filename
 
     ! defaults
 
-    opening = .true.
     force = .false.
     friction_law = 'frictionless'
     problem = ''
     friction_file = .false.
+    stress_file   = .false.
+    strength_file = .false.
     filename = ''
+    stress_filename = ''
+    strength_filename = ''
     Psi0 = 0d0
-    S0 = 0d0
     angle = 0d0
     rs = ratestate_constant(0.01d0,0.014d0,1d-6,0.6d0,0.4d0,0.2d0,1d20)
     sw = slipweak_constant(0d0,1d0,0d0,1d0)
@@ -99,9 +106,8 @@ contains
     xlockm = -1d10
     xlockp = 1d10
     flock = 1d10
-    subduction_f0=0d0
-    subduction_N0=0d0
-    subduction_B=0d0
+    skempton = 0d0
+    Sf0 = 0d0
 
     ! read in friction parameters
 
@@ -110,12 +116,9 @@ contains
     read(input,nml=friction_list,iostat=stat)
     if (stat>0) call error('Error in friction_list','init_friction')
 
-    FR%opening = opening
     FR%force = force
     FR%friction_law = friction_law
     FR%problem = problem
-    FR%Psi0 = Psi0
-    FR%f_S0 = S0
     FR%angle = 0.017453292519943d0*angle ! convert deg to rad
     FR%kn = kn
     FR%ld = ld
@@ -126,9 +129,7 @@ contains
     FR%xlockm = xlockm
     FR%xlockp = xlockp
     FR%flock = flock
-    FR%subduction_f0 = subduction_f0
-    FR%subduction_N0 = subduction_N0
-    FR%subduction_B = subduction_B
+    FR%skempton = skempton
 
     ! output friction parameters
     
@@ -138,23 +139,19 @@ contains
 
        call write_matlab(echo,'friction_law',FR%friction_law,FRstr)
        call write_matlab(echo,'problem',FR%problem,FRstr)
-       call write_matlab(echo,'opening',FR%opening,FRstr)
        call write_matlab(echo,'force',FR%force,FRstr)
        call write_matlab(echo,'angle',FR%angle,FRstr)
-       call write_matlab(echo,'S0',FR%f_S0,FRstr)
-       call write_matlab(echo,'subduction_f0',FR%subduction_f0,FRstr)
-       call write_matlab(echo,'subduction_N0',FR%subduction_N0,FRstr)
-       call write_matlab(echo,'subduction_B',FR%subduction_B,FRstr)
 
        call write_matlab(echo,'xlockm',FR%xlockm,FRstr)
        call write_matlab(echo,'xlockp',FR%xlockp,FRstr)
        call write_matlab(echo,'flock',FR%flock,FRstr)
 
+       call write_matlab(echo,'skempton',FR%skempton,FRstr)
+
        select case(FR%friction_law)
 
        case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
-
-          call write_matlab(echo,'Psi0',FR%Psi0,FRstr)
+          call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
           call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
           call write_matlab(echo,'rs.V0',rs%V0,FRstr)
@@ -162,13 +159,21 @@ contains
           call write_matlab(echo,'rs.L' ,rs%L ,FRstr)
           call write_matlab(echo,'rs.fw',rs%fw,FRstr)
           call write_matlab(echo,'rs.Vw',rs%Vw,FRstr)
-
        case('SW')
-
           call write_matlab(echo,'sw.c0',sw%c0,FRstr)
           call write_matlab(echo,'sw.fs',sw%fs,FRstr)
           call write_matlab(echo,'sw.fd',sw%fd,FRstr)
           call write_matlab(echo,'sw.Dc',sw%Dc,FRstr)
+       case('RSLrate')
+          call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
+          call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
+          call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
+          call write_matlab(echo,'rs.V0',rs%V0,FRstr)
+          call write_matlab(echo,'rs.f0',rs%f0,FRstr)
+          call write_matlab(echo,'rs.L' ,rs%L ,FRstr)
+          call write_matlab(echo,'rs.fw',rs%fw,FRstr)
+          call write_matlab(echo,'rs.Vw',rs%Vw,FRstr)
+          call write_matlab(echo,'Sf0'  ,Sf0  ,FRstr)
 
        end select
 
@@ -222,10 +227,15 @@ contains
     
     allocate(FR%Psi(m:p),FR%DPsi(m:p),FR%D(m:p),FR%trup(m:p))
 
-    FR%Psi  = 1d40
+    FR%Psi  = Psi0
     FR%DPsi = 1d40
     FR%D = 0d0
     FR%trup = 1d10
+
+    allocate(FR%W(m:p),FR%DW(m:p))
+
+    FR%W  = 0d0
+    FR%DW = 1d40
 
     select case(FR%friction_law)
     case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
@@ -248,6 +258,21 @@ contains
        FR%pd%Dmax = 0d0
        FR%pd%trup = 1d40
        FR%pd%Vpeak = 0d0
+    case('RSLrate')
+       allocate(FR%Sf(m:p),FR%DSf(m:p),FR%DV(m:p))
+       FR%Sf  = Sf0
+       FR%DSf = 1d40
+       FR%DV  = 1d40
+       allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
+       FR%rs%a  = rs%a
+       FR%rs%b  = rs%b
+       FR%rs%V0 = rs%V0
+       FR%rs%f0 = rs%f0
+       FR%rs%L  = rs%L
+       FR%rs%fw = rs%fw
+       FR%rs%Vw = rs%Vw
+       FR%S0 = FR%Sf
+       FR%S = FR%Sf
     end select
 
     if (friction_file) then
@@ -255,6 +280,23 @@ contains
        if (process_m) call read_friction(FR,filename,comm_m,array)
        if (process_p) call read_friction(FR,filename,comm_p,array)
     end if
+
+    if (stress_file) then
+       allocate(FR%bs%N0(m:p),FR%bs%S0(m:p))
+       FR%bs%N0(m:p) = 1d40
+       FR%bs%S0(m:p) = 1d40
+
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_stress(FR,stress_filename,comm_m,array)
+       if (process_p) call read_stress(FR,stress_filename,comm_p,array)
+    end if
+
+    if (strength_file) then 
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_strength(FR,strength_filename,comm_m,array)
+       if (process_p) call read_strength(FR,strength_filename,comm_p,array)
+    end if
+
 
   end subroutine init_friction
 
@@ -279,6 +321,9 @@ contains
     if (allocated(FR%Dn  )) deallocate(FR%Dn  )
     if (allocated(FR%DDs )) deallocate(FR%DDs )
     if (allocated(FR%DDn )) deallocate(FR%DDn )
+    if (allocated(FR%W   )) deallocate(FR%W   )
+    if (allocated(FR%DW  )) deallocate(FR%DW  )
+    if (allocated(FR%DV  )) deallocate(FR%DV  )
 
     if (allocated(FR%rs%a )) deallocate(FR%rs%a )
     if (allocated(FR%rs%b )) deallocate(FR%rs%b )
@@ -296,6 +341,13 @@ contains
     if (allocated(FR%pd%Dmax)) deallocate(FR%pd%Dmax)
     if (allocated(FR%pd%trup)) deallocate(FR%pd%trup)
     if (allocated(FR%pd%Vpeak)) deallocate(FR%pd%Vpeak)
+
+    if (allocated(FR%bs%N0)) deallocate(FR%bs%N0)
+    if (allocated(FR%bs%S0)) deallocate(FR%bs%S0)
+
+    if (allocated(FR%Sf  )) deallocate(FR%Sf  )
+    if (allocated(FR%DSf )) deallocate(FR%DSf )
+    if (allocated(FR%DV  )) deallocate(FR%DV  )
 
   end subroutine destroy_friction
 
@@ -318,7 +370,7 @@ contains
 
     select case(FR%friction_law)
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RSLrate')
        
        call read_file_distributed(fh,FR%rs%a )
        call read_file_distributed(fh,FR%rs%b )
@@ -327,6 +379,7 @@ contains
        call read_file_distributed(fh,FR%rs%L )
        call read_file_distributed(fh,FR%rs%fw)
        call read_file_distributed(fh,FR%rs%Vw)
+       ! could add initial state: call read_file_distributed(fh,FR%Psi)
 
     case('SW')
 
@@ -346,6 +399,53 @@ contains
     call close_file_distributed(fh)
 
   end subroutine read_friction
+
+  
+  subroutine read_stress(FR,filename,comm,array)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%bs%S0)
+    call read_file_distributed(fh,FR%bs%N0)
+
+    call close_file_distributed(fh)
+
+  end subroutine read_stress
+
+
+  subroutine read_strength(FR,filename,comm,array)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%Sf)
+    
+    call close_file_distributed(fh)
+
+  end subroutine read_strength
 
 
   subroutine checkpoint_friction(fh,operation,FR)
@@ -378,6 +478,11 @@ contains
        call read_file_distributed(fh,FR%Dn)
        call read_file_distributed(fh,FR%DDs)
        call read_file_distributed(fh,FR%DDn)
+       call read_file_distributed(fh,FR%W)
+       call read_file_distributed(fh,FR%DW)
+       if (allocated(FR%Sf )) call read_file_distributed(fh,FR%Sf)
+       if (allocated(FR%DSf)) call read_file_distributed(fh,FR%DSf)
+       if (allocated(FR%DV )) call read_file_distributed(fh,FR%DV)
     case('write')
        call write_file_distributed(fh,FR%D)
        call write_file_distributed(fh,FR%Psi)
@@ -393,6 +498,11 @@ contains
        call write_file_distributed(fh,FR%Dn)
        call write_file_distributed(fh,FR%DDs)
        call write_file_distributed(fh,FR%DDn)
+       call write_file_distributed(fh,FR%W)
+       call write_file_distributed(fh,FR%DW)
+       if (allocated(FR%Sf )) call write_file_distributed(fh,FR%Sf)
+       if (allocated(FR%DSf)) call write_file_distributed(fh,FR%DSf)
+       if (allocated(FR%DV )) call write_file_distributed(fh,FR%DV)
     end select
 
   end subroutine checkpoint_friction
@@ -408,6 +518,12 @@ contains
     FR%DDs  = A*FR%DDs
     FR%DDn  = A*FR%DDn
     FR%DPsi = A*FR%DPsi
+    FR%DW   = A*FR%DW
+
+    if (allocated(FR%DV)) then
+       FR%DV   = A*FR%DV
+       FR%DSf  = A*FR%DSf
+    end if
 
   end subroutine scale_rates_friction
   
@@ -423,109 +539,86 @@ contains
     FR%Dn  = FR%Dn +dt*FR%DDn
     FR%D   = FR%D  +dt*abs(FR%DDs)
     FR%Psi = FR%Psi+dt*FR%DPsi
+    FR%W   = FR%W  +dt*FR%DW
 
   end subroutine update_fields_friction
 
 
-  subroutine initial_state(FR,Psi,V,S,N,i,x,y,dt)
-
-    use io, only : error
-    use mms, only: inplane_fault_mms
-
-    implicit none
-
-    type(fr_type),intent(in) :: FR
-    real,intent(inout) :: Psi
-    real,intent(in) :: V,S,N,x,y,dt
-    integer,intent(in) :: i
-
-    real :: Vex,Nex,Sex
-    character(256) :: str
-    type(ratestate_constant) :: rs
-    real :: theta0
-
-    select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
-       Psi = 0d0
-       return
-    end select
-
-    call ratestate_param(i,x,y,FR,rs)
-
-    if (dt>0d0) then
-       theta0 = (rs%L/rs%V0)*exp((Psi-rs%f0)/rs%b)
-       Psi = Psi+rs%b*log(1d0+dt/theta0)
-       return
-    end if
-
-    ! set Psi to constant initial value if V = 0
-    ! (which probably does not satisfy S = f(V,Psi)*N)
-
-    select case(FR%problem)
-    case default
-       if (abs(V)==0d0) then
-          Psi = FR%Psi0
-          return
-       end if
-    case('tpv105')
-       Psi = rs%a*log((2d0*rs%V0/1d-16)*sinh(FR%f_S0/(rs%a*N)))
-       return
-    end select
-
-    ! otherwise set Psi such that S = f(V,Psi)*N
-
-    select case(FR%friction_law)
-    case('SL','FL')
-       Psi = abs(S/N)-rs%a*log(abs(V)/rs%V0)
-    case('RSL','RFL','RSF')
-       if (V*S<0d0) then
-          write(str,*) 'Incompatible signs: V = ',V,' S = ',S,' at x = ',x,', y = ',y
-          call error(str,'initial_state')
-       else
-          Psi = rs%a*log(2d0*rs%V0/V*sinh(S/(rs%a*N)))
-       end if
-    case('RSL-mms','RSL-mms-nostate')
-       if (V*S<0d0) then
-          write(str,*) 'Incompatible signs: V = ',V,' S = ',S,' at x = ',x,', y = ',y
-          call error(str,'initial_state')
-       else
-          Vex = inplane_fault_mms(x,y,0d0,1,'V')
-          Sex = inplane_fault_mms(x,y,0d0,1,'S')
-          Nex = inplane_fault_mms(x,y,0d0,1,'N')
-          Psi = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*Nex))/Vex)
-          Psi = 0d0
-       end if
-    case default
-       Psi = 0d0
-    end select
-
-  end subroutine initial_state
-
-
-  subroutine solve_friction(FR,V,S,N,Slock,eta,D,Psi,i,x,y,t,info)
+  subroutine solve_friction(FR,V,S,O,N,S0,N0,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
 
     use mms, only : bessel,inplane_fault_mms
     use io, only : error
 
     implicit none
 
-    type(fr_type),intent(in) :: FR
-    real,intent(inout) :: V,S
-    real,intent(in) :: N,Slock,eta,D,Psi,x,y,t
+    ! FR = friction variables
+    ! V = slip velocity
+    ! S = shear stress
+    ! O = opening rate
+    ! N = effective normal stress
+    ! S0 = shear stress, contribution from prestress in body
+    ! N0 = effective normal stress, contribution from prestress in body
+    !      and pore pressure change from thermal pressurization
+    ! phip = stress transfer for normal stress (does not include prestress)
+    ! phis = stress transfer for shear stress (does include prestress)
+    ! eta = shear radiation damping
+    ! D = slip (integral of absolute value of slip velocity)
+    ! Psi = state variable
+    ! x,y,t = positions and time
+    ! dt = time step (used for rate form of friction)
+    ! i = index of point on interface being updated
+    ! info = flag, true to display nonlinear solver details
+
+    type(fr_type),intent(inout) :: FR
+    real,intent(inout) :: V,S,O,N
+    real,intent(in) :: S0,N0,phip,phis,eta,D,Psi,x,y,t,dt
     integer,intent(in) :: i
     logical,intent(in) :: info
 
+    ! fail = true if nonlinear solver failed
+    ! Nlock, Slock = normal, shear stresses acting on interface in absence of further opening, slip
+    ! Sk = fault strength, kinematically forced
+    ! xm,xp,fkm,fkp = kinematic forcing
+    ! xx = coordinate along fault
+    ! Vex,Sex,Nex,Psiex = exact solutions (for mms)
+    ! sw = slip weakening friction parameters
+    ! rs = rate-state friction parameters
+
     logical :: fail
-    real :: Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
+    real :: Nlock,Slock,Sk,xm,xp,fkm,fkp,xx,Vex,Sex,Nex,Psiex
     type(slipweak_constant) :: sw
     type(ratestate_constant) :: rs
+
+    ! calculate Slock and Nlock, stresses on fault in absence of active slipping and opening
+    
+    ! contribution from loads directly applied to fault
+    
+    call load_stress(FR,x,y,t,i,FR%S0(i),FR%N0(i))
+
+    ! add contributions from prestress in medium (and pore pressure change from thermal pressurization,
+    ! which is captured in N0)
+    
+    FR%S0(i) = FR%S0(i)+S0
+    FR%N0(i) = FR%N0(i)+N0
+
+    ! additional contributions from stress change carried by waves are phip and phis
+    
+    ! now add contributions together, taking into account poroelastic fault zone effects
+
+    Slock = FR%S0(i)+phis
+    Nlock = FR%N0(i)-(1d0-FR%skempton)*phip ! poroelastic effect applies only to stress change
+
+    ! fault normal stress and opening rate (no opening condition)
+
+    O = 0d0
+    N = Nlock
 
     ! lock fault outside specified region, specified in rotated coordinates
     
     xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
 
-    if (xx<FR%xlockm.or.xx>FR%xlockp) then
-       S = FR%flock*N
+    if (xx<FR%xlockm.or.xx>FR%xlockp) then ! point is outside
+       S = FR%flock*N ! fault strength
        if (abs(Slock)>=S) then ! slipping
           S = sign(S,Slock)
           V = (Slock-S)/eta
@@ -554,6 +647,7 @@ contains
     end select
 
     ! frictional strength from kinematic forcing
+    ! (should move this to a separate subroutine)
 
     if (FR%force) then
 
@@ -618,6 +712,8 @@ contains
 
        call ratestate_param(i,x,y,FR,rs)
 
+       if (FR%friction_law == 'RSL-mms') N = inplane_fault_mms(x,y,t,1,'N')
+
        ! solve nonlinear equation with Newton's method
 
        select case(FR%problem)
@@ -658,9 +754,64 @@ contains
           end if
        end if
 
+    case('RSLrate') ! Rate form of slip law
+       if (dt==0d0) then ! true for initial time step
+          S = FR%Sf(i)
+          V = (Slock-S)/eta
+          return
+       end if
+       call solve_friction_rate_form(FR,V,S,N,Slock,eta,x,y,dt,i,rs)
+
     end select
 
   end subroutine solve_friction
+
+
+  subroutine solve_friction_rate_form(FR,V,S,N,Slock,eta,x,y,dt,i,rs)
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    real,intent(inout) :: V,S,N
+    real,intent(in) :: Slock,eta,x,y,dt
+    integer,intent(in) :: i
+    type(ratestate_constant) :: rs
+    
+    real :: alpha,beta,fv,absV,Vold,Sfold,Ftau,Fvee
+
+    call ratestate_param(i,x,y,FR,rs)
+
+    Vold = V
+    Sfold = FR%Sf(i)
+    
+    absV = abs(V)
+
+    fv = rs%f0 - (rs%b-rs%a)*log(absV/rs%V0)
+
+    if ( abs(rs%a*max(N,0d0)/FR%Sf(i)) < 1d-20 ) then 
+       if ( FR%Sf(i) > 0 ) then
+          alpha = rs%a*max(N,0d0)/V
+       else
+          alpha = -rs%a*max(N,0d0)/V
+       end if
+    else
+       alpha = rs%a*max(N,0d0)/V*tanh( FR%Sf(i)/(rs%a*max(N,0d0)) )
+    end if
+
+    beta = -absV/rs%L*( FR%Sf(i)-max(N,0d0)*sign(fv,FR%Sf(i)) )
+
+    V = (Slock-FR%Sf(i)-dt*FR%DSf(i)+V*alpha+dt*alpha*FR%DV(i)-dt*beta)/(alpha+eta)
+
+    FR%Sf(i) = Slock-eta*V
+    S = FR%Sf(i)
+
+    Ftau = (FR%Sf(i)-Sfold)/dt-FR%DSf(i)
+    Fvee = (V-Vold)/dt-FR%DV(i)
+    
+    FR%DSf(i) = FR%DSf(i) + Ftau
+    FR%DV(i)  = FR%DV(i)  + Fvee
+
+  end subroutine solve_friction_rate_form
 
 
   subroutine slipweak_param(i,x,y,FR,sw)
@@ -674,38 +825,12 @@ contains
     type(fr_type),intent(in) :: FR
     type(slipweak_constant),intent(out) :: sw
 
-    real :: dip
-    real,parameter :: tol = 100d0*epsilon(x)
-
-    ! unmodified parameters
-    
     sw = slipweak_constant(FR%sw%c0(i),FR%sw%fs(i),FR%sw%fd(i),FR%sw%Dc(i))
-
-    select case(FR%problem)
-    case('TPV5','TPV205')
-       ! barrier at ends
-       if (abs(x)>15d0+tol) sw%c0 = 1d10
-    case('TPV10','TPV11','TPV210')
-       dip = 2d0*x
-       ! barrier at depth
-       if (dip>15d0+tol) sw%c0 = 1d10
-    case('TPV12','TPV13','TPV12alt','TPV13alt')
-       dip = 2d0*x
-       ! reduced friction coefficient inside nucleation region
-       sw%fs = boxcar(dip-12d0,1.5d0,0.54d0,0.7d0)
-       ! barrier at depth
-       if (dip>15d0+tol) sw%c0 = 1d10
-    case('TPV14BRANCH','TPV15BRANCH','TPV14bBRANCH','TPV15bBRANCH')
-       ! first node on the branch is locked
-       if (x**2+y**2<tol) sw%c0 = 1d10
-    end select
 
   end subroutine slipweak_param
 
 
   subroutine ratestate_param(i,x,y,FR,rs)
-
-    use utilities, only : smooth_boxcar
 
     implicit none
 
@@ -714,21 +839,8 @@ contains
     type(fr_type),intent(in) :: FR
     type(ratestate_constant),intent(out) :: rs
 
-    ! unmodified parameters
-
     rs = ratestate_constant(FR%rs%a(i),FR%rs%b(i),FR%rs%V0(i), &
          FR%rs%f0(i),FR%rs%L(i),FR%rs%fw(i),FR%rs%Vw(i))
-    
-    ! modification for specific problems
-
-    select case(FR%problem)
-    case('rough-old') ! increase in a and Vw with decreasing x
-       rs%a = rs%a+0.008d0*max(0d0,min(1d0,-(x+6d0)/6d0))
-       rs%Vw = rs%Vw+5d0*max(0d0,-(x+6d0)/6d0)
-    case('tpv105')
-       rs%a  = rs%a +smooth_boxcar(abs(x),15d0,3d0,0d0,0.01d0)
-       rs%Vw = rs%Vw+smooth_boxcar(abs(x),15d0,3d0,0d0, 0.9d0)
-    end select
 
   end subroutine ratestate_param
 
@@ -745,11 +857,13 @@ contains
     real,intent(in) :: Slock,N,eta,Psi,x,y,t
     logical,intent(in) :: info
     logical,intent(out) :: fail
-    
+
     character(256) :: str
     integer :: i
     integer,parameter :: imax=99
     real :: inV,inS,Vmin,Vmax,dSdV,Sf,dSfdV,dV,R,dRdV
+
+    ! relative and absolute error tolerances for Newton solver
     !real,parameter :: rtolV=0d-12, atolV=0d0, atolR=1d-14
     !real,parameter :: rtolV=1d-12, atolV=0d-20, atolR=1d-12
     !real,parameter :: rtolV=1d-12, atolV=0d0, atolR=epsilon(1d0)*1d4
@@ -923,9 +1037,31 @@ contains
   end subroutine estimate_V
 
 
+  subroutine set_rates_friction(FR,m,p,x,y,t)
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    integer,intent(in) :: m,p
+    real,intent(in) :: x(m:p),y(m:p),t
+
+    integer :: i
+
+    do i = m,p
+       FR%DDs(i) = FR%DDs(i)+FR%V(i) ! shear (tangential) displacement discontinuity rate
+       FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
+       FR%DPsi(i) = FR%DPsi(i)+state_rate(FR,FR%V(i),FR%Psi(i),i,x(i),y(i),t)
+       FR%DW(i) = FR%DW(i)+FR%S(i)*FR%V(i) ! work rate
+       call rupture_front(FR,FR%D(i),FR%V(i),t,FR%trup(i))
+    end do
+
+  end subroutine set_rates_friction
+
+
   function state_rate(FR,V,Psi,i,x,y,t) result(DPsi)
 
     use mms, only : inplane_fault_mms
+    use io, only : error
 
     implicit none
 
@@ -938,20 +1074,27 @@ contains
     real :: absV,frs,fss,fLV,Psiss,Hmss
     type(ratestate_constant) :: rs
 
+    ! state evolution not required for some friction laws
+
+    select case(FR%friction_law)
+
+    case('frictionless','pseudodynamic','SW','RSLrate')
+       DPsi = 0d0
+       return
+    end select
+
+    ! handle special case that might cause floating point error
+
     if (V==0d0) then
        DPsi = 0d0
        return
     end if
 
-    absV = abs(V)
-
-    select case(FR%friction_law)
-    case('frictionless','pseudodynamic','SW')
-       DPsi = 0d0
-       return
-    end select
+    ! set state rate for rate-and-state friction laws
 
     call ratestate_param(i,x,y,FR,rs)
+
+    absV = abs(V)
 
     select case(FR%friction_law)
 
@@ -967,16 +1110,8 @@ contains
        
        fLV = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
        fss = rs%fw+(fLV-rs%fw)/(1d0+(V/rs%Vw)**8)**0.125d0
-       !fss = rs%fw+(fLV-rs%fw)/sqrt(1d0+(V/rs%Vw)**2)
-
-       !if (absV<rs%Vw) then
-       !   fss = fLV
-       !else
-       !   fss = rs%fw+(fLV-rs%fw)*rs%Vw/absV
-       !end if
 
        DPsi = -(absV/rs%L)*(frs-fss)
-
 
     case('RSL','RSL-mms-nostate')
 
@@ -1018,13 +1153,6 @@ contains
 
        fLV = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
        fss = rs%fw+(fLV-rs%fw)/(1d0+(V/rs%Vw)**8)**0.125d0
-
-!!$       if (absV<rs%Vw) then
-!!$          fss = fLV
-!!$       else
-!!$          fss = rs%fw+(fLV-rs%fw)*rs%Vw/absV
-!!$       end if
-
        frs = rs%a*arcsinh(0.5d0*absV/rs%V0*exp(Psi/rs%a))
        DPsi = (absV/rs%L)*(fss-frs)
 
@@ -1037,7 +1165,7 @@ contains
 
     case default
 
-       DPsi = 0d0
+       call error('Invalid friction law','state_rate')
 
     end select
 
@@ -1094,9 +1222,9 @@ contains
   end function coth
 
 
-  subroutine load_stress(FR,x,y,t,S0,N0)
+  subroutine load_stress(FR,x,y,t,i,S0,N0)
 
-    use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step
+    use utilities, only : step,boxcar,gaussian,smooth,triangle,decaying_step,smooth_boxcar
     use io, only : error
     use material, only : block_material
     use geometry, only : rotate_xy2nt
@@ -1105,6 +1233,7 @@ contains
 
     type(fr_type),intent(in) :: FR
     real,intent(in) :: x,y,t
+    integer,intent(in) :: i
     real,intent(out) :: S0,N0
 
     real :: r,A,B,xx,dip
@@ -1121,6 +1250,9 @@ contains
        N0 = 0
        S0 = 0
 
+       if (allocated(FR%bs%S0)) S0 = FR%bs%S0(i)
+       if (allocated(FR%bs%N0)) N0 = FR%bs%N0(i)
+
        select case(FR%ld%shape)
        case default
           call error('Invalid load shape','load_stress')
@@ -1132,6 +1264,8 @@ contains
           A = (xx-FR%ld%x0)/FR%ld%R
        case('boxcar')
           A = boxcar  (r,1d0,1d0,0d0)
+       case('smooth_boxcar')
+          A = smooth_boxcar(r,1d0,0.1d0,1d0,0d0)
        case('triangle')
           A = triangle(r,1d0,1d0,0d0)
        case('smooth')
@@ -1197,7 +1331,6 @@ contains
        N0 = 0d0
        S0 = -78d0
 
-
     ! alt only matters for the branch
     case('TPV14b','TPV14balt')
 
@@ -1221,63 +1354,6 @@ contains
 
        N0 = 0d0
        S0 = 0d0
-
-    case('shaw_coon') ! linear decrease in stress outside region
-
-       r = abs(x/FR%ld%R)
-       A = smooth(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = FR%ld%S*A*B
-       if (abs(x)>10d0) S0 = S0-1d0*(abs(x)-10d0)
-       N0 = FR%ld%N*A*B
-
-    case('unilateral') ! drop stress to left for unilateral pulse
-
-       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
-       r = abs((xx-FR%ld%x0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = FR%ld%S*A*B+min(0d0,FR%uni_dSdx*(xx+FR%uni_x0))
-       N0 = FR%ld%N*A*B
-
-    case('gaussian_time') ! shear stress carried by incident Gaussian pulse
-
-       A = gaussian(3d0*t-10d0,1d0,1d0,0d0)
-       S0 = FR%ld%S*A
-       N0 = FR%ld%N*A
-
-    case('dip7deg')
-
-       S0 = 2.16d0
-       N0 = 4.78d0
-       S0 = S0+boxcar(abs(x+60.4781d0),15d0,0.72d0,0d0)
-
-    case('BU')
-
-       S0 = -2.1d0*y
-       N0 = -7.2d0*y
-
-       r = abs((y-FR%ld%y0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-
-       S0 = S0+FR%ld%S*A*B
-       N0 = N0+FR%ld%N*A*B
-
-    case('SB')
-       
-       S0 = 22.2d0-10.09d0*y
-       N0 = 37.0d0-16.82d0*y
-       
-       xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault       
-       r = abs((xx-FR%ld%x0)/FR%ld%R)
-       A = gaussian(r,1d0,1d0,0d0)
-       B = load_ramp(t,FR%ld)
-       
-       S0 = S0+FR%ld%S*A*B
-       N0 = N0+FR%ld%N*A*B
 
     end select
 

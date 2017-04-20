@@ -3,7 +3,8 @@ module fields
   implicit none
 
   type :: bnd_fields
-     ! F = current fields (first grid data, then overwritten with hat variables)
+     ! F = fields (grid data)
+     ! FHAT = fields (hat variables)
      ! DF = field rates
      ! F0 = initial fields
      ! M = material properties
@@ -14,7 +15,7 @@ module fields
      ! DU = boundary displacement rate
      logical :: holds_bnd
      integer :: comm
-     real,dimension(:,:),allocatable :: U,DU,F,F0,DF,M
+     real,dimension(:,:),allocatable :: U,DU,F,Fhat,F0,DF,M
      real,dimension(:),allocatable :: E,DE
   end type bnd_fields
 
@@ -32,7 +33,7 @@ module fields
      real :: Etot
      real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga
      real,dimension(:,:,:),allocatable :: Wx,Wy,DWx,DWy ! PML fields
-     real,dimension(:,:),allocatable :: gammap,lambda
+     real,dimension(:,:),allocatable :: gammap,lambda,Wp
      real,dimension(:),allocatable :: Hx,Hy
   end type fields_type
 
@@ -89,7 +90,6 @@ contains
     namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
          P1,P2,P3,P4,P5,besselA
-
 
     ! defaults
 
@@ -187,10 +187,10 @@ contains
        if (M%response=='plastic') then
           call allocate_array_body(F%gammap ,C,ghost_nodes=.false.,Fval=0d0)
           call allocate_array_body(F%lambda ,C,ghost_nodes=.false.,Fval=0d0)
-       end if
-
-       if(M%plastic_strain_tensor) then
-         call allocate_array_body(F%Ep ,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
+          if(M%plastic_strain_tensor) &
+               call allocate_array_body(F%Ep,C,F%nEP,ghost_nodes=.false.,Fval=0d0)
+          if(M%plastic_work) &
+               call allocate_array_body(F%Wp,C,ghost_nodes=.false.,Fval=0d0)
        end if
     end if
     if (pmlx .and. .not.allocated(F%Wx)) then
@@ -205,13 +205,13 @@ contains
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndR,BF%bndFR,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndB,BF%bndFB,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
     call init_fields_side(B%bndT,BF%bndFT,B%skip,B%mx,B%px,F%nF,F%nU,F0,mode,problem, &
-         t,iblock,P1,P2,P3,P4,F%energy_balance,M)
+         t,iblock,P1,P2,P3,P4,M)
 
     ! initialize fields in interior of this block
 
@@ -269,8 +269,9 @@ contains
     if (allocated(F%U      )) deallocate(F%U      )
     if (allocated(F%DU     )) deallocate(F%DU     )
     if (allocated(F%gammap )) deallocate(F%gammap )
-    if (allocated(F%EP     )) deallocate(F%EP     )
     if (allocated(F%lambda )) deallocate(F%lambda )
+    if (allocated(F%EP     )) deallocate(F%EP     )
+    if (allocated(F%Wp     )) deallocate(F%Wp     )
     if (allocated(F%Hx     )) deallocate(F%Hx     )
     if (allocated(F%Hy     )) deallocate(F%Hy     )
 
@@ -297,14 +298,15 @@ contains
 
     type(bnd_fields),intent(inout) :: bndF
 
-    if (allocated(bndF%F  )) deallocate(bndF%F  )
-    if (allocated(bndF%DF )) deallocate(bndF%DF )
-    if (allocated(bndF%F0 )) deallocate(bndF%F0 )
-    if (allocated(bndF%M  )) deallocate(bndF%M  )
-    if (allocated(bndF%U  )) deallocate(bndF%U  )
-    if (allocated(bndF%DU )) deallocate(bndF%DU )
-    if (allocated(bndF%E  )) deallocate(bndF%E  )
-    if (allocated(bndF%DE )) deallocate(bndF%DE )
+    if (allocated(bndF%F   )) deallocate(bndF%F   )
+    if (allocated(bndF%Fhat)) deallocate(bndF%Fhat)
+    if (allocated(bndF%DF  )) deallocate(bndF%DF  )
+    if (allocated(bndF%F0  )) deallocate(bndF%F0  )
+    if (allocated(bndF%M   )) deallocate(bndF%M   )
+    if (allocated(bndF%U   )) deallocate(bndF%U   )
+    if (allocated(bndF%DU  )) deallocate(bndF%DU  )
+    if (allocated(bndF%E   )) deallocate(bndF%E   )
+    if (allocated(bndF%DE  )) deallocate(bndF%DE  )
 
   end subroutine destroy_bnd_fields
 
@@ -355,6 +357,7 @@ contains
        if(F%peak) call read_file_distributed(fh,F%pga(C%mx:C%px,C%my:C%py,1))
        if (allocated(F%gammap )) call read_file_distributed(fh,F%gammap )
        if (allocated(F%lambda )) call read_file_distributed(fh,F%lambda )
+       if (allocated(F%Wp     )) call read_file_distributed(fh,F%Wp     )
        if (allocated(F%Wx     )) call read_file_distributed(fh,F%Wx     )
        if (allocated(F%Wy     )) call read_file_distributed(fh,F%Wy     )
        if (allocated(F%EP     )) then
@@ -377,6 +380,7 @@ contains
        if(F%peak) call write_file_distributed(fh,F%pga(:,:,1))
        if (allocated(F%gammap )) call write_file_distributed(fh,F%gammap )
        if (allocated(F%lambda )) call write_file_distributed(fh,F%lambda )
+       if (allocated(F%Wp     )) call write_file_distributed(fh,F%Wp     )
        if (allocated(F%Wx     )) call write_file_distributed(fh,F%Wx     )
        if (allocated(F%Wy     )) call write_file_distributed(fh,F%Wy     )
        if (allocated(F%EP     )) then
@@ -466,95 +470,103 @@ contains
              select case(side)
              case(1) ! L
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFL%F (:,l))
-                   call read_file_distributed(fh,BF%bndFL%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFL%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFL%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFL%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFL%U( :,l))
                   call read_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFL%DE)
+                call read_file_distributed(fh,BF%bndFL%E)
+                call read_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFR%F (:,l))
-                   call read_file_distributed(fh,BF%bndFR%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFR%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFR%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFR%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFR%U( :,l))
                   call read_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFR%DE)
+                 call read_file_distributed(fh,BF%bndFR%E)
+                 call read_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFB%F (:,l))
-                   call read_file_distributed(fh,BF%bndFB%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFB%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFB%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFB%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFB%U( :,l))
                   call read_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFB%DE)
+                 call read_file_distributed(fh,BF%bndFB%E)
+                 call read_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
-                   call read_file_distributed(fh,BF%bndFT%F (:,l))
-                   call read_file_distributed(fh,BF%bndFT%F0(:,l))
+                   call read_file_distributed(fh,BF%bndFT%F   (:,l))
+                   call read_file_distributed(fh,BF%bndFT%Fhat(:,l))
+                   call read_file_distributed(fh,BF%bndFT%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call read_file_distributed(fh,BF%bndFT%U( :,l))
                   call read_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%E)
-                if (BF%energy_balance) call read_file_distributed(fh,BF%bndFT%DE)
+                 call read_file_distributed(fh,BF%bndFT%E)
+                 call read_file_distributed(fh,BF%bndFT%DE)
              end select
           case('write')
              select case(side)
              case(1) ! L
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFL%F (:,l))
-                   call write_file_distributed(fh,BF%bndFL%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFL%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFL%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFL%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFL%U( :,l))
                   call write_file_distributed(fh,BF%bndFL%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFL%DE)
+                 call write_file_distributed(fh,BF%bndFL%E)
+                 call write_file_distributed(fh,BF%bndFL%DE)
              case(2) ! R
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFR%F (:,l))
-                   call write_file_distributed(fh,BF%bndFR%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFR%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFR%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFR%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFR%U( :,l))
                   call write_file_distributed(fh,BF%bndFR%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFR%DE)
+                 call write_file_distributed(fh,BF%bndFR%E)
+                 call write_file_distributed(fh,BF%bndFR%DE)
              case(3) ! B
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFB%F (:,l))
-                   call write_file_distributed(fh,BF%bndFB%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFB%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFB%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFB%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFB%U( :,l))
                   call write_file_distributed(fh,BF%bndFB%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFB%DE)
+                 call write_file_distributed(fh,BF%bndFB%E)
+                 call write_file_distributed(fh,BF%bndFB%DE)
              case(4) ! T
                 do l = 1,F%nF
-                   call write_file_distributed(fh,BF%bndFT%F (:,l))
-                   call write_file_distributed(fh,BF%bndFT%F0(:,l))
+                   call write_file_distributed(fh,BF%bndFT%F   (:,l))
+                   call write_file_distributed(fh,BF%bndFT%Fhat(:,l))
+                   call write_file_distributed(fh,BF%bndFT%F0  (:,l))
                 end do
                 do l = 1,F%nU
                   call write_file_distributed(fh,BF%bndFT%U( :,l))
                   call write_file_distributed(fh,BF%bndFT%DU(:,l))
                 end do
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%E)
-                if (BF%energy_balance) call write_file_distributed(fh,BF%bndFT%DE)
+                 call write_file_distributed(fh,BF%bndFT%E)
+                 call write_file_distributed(fh,BF%bndFT%DE)
              end select
           end select
        end if
@@ -655,7 +667,7 @@ contains
 
 
   subroutine init_fields_side(bnd,bndF,Bskip,m,p,nF,nU,F0,mode,problem,t,iblock,&
-      P1,P2,P3,P4,energy_balance,Mat)
+      P1,P2,P3,P4,Mat)
 
     use geometry, only : curve
     use material, only : block_material
@@ -664,7 +676,7 @@ contains
 
     type(curve),intent(in) :: bnd
     type(bnd_fields),intent(inout) :: bndF
-    logical,intent(in) :: Bskip,energy_balance
+    logical,intent(in) :: Bskip
     integer,intent(in) :: m,p,nF,nU
     real,intent(in) :: F0(:),t
     integer,intent(in) :: mode,iblock
@@ -675,6 +687,31 @@ contains
     integer :: i
     real :: A1,A2,A3,A4
     real,dimension(nF) :: F1,F2,F3,F4
+
+    allocate(bndF%F(m:p,nF),bndF%Fhat(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
+    bndF%F    = 1d40
+    bndF%Fhat = 1d40
+    bndF%F0   = 1d40
+    bndF%M    = 1d40
+
+    allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
+    bndF%U  = 0d0
+    bndF%DU  = 1d40
+
+    allocate(bndF%E(m:p),bndF%DE(m:p))
+    bndF%E  = 0d0
+    bndF%DE = 1d40
+
+    ! note that boundary fields are allocated (but not initialized with proper values)
+    ! even if process is not responsible for this block -- this is because fields on
+    ! opposite side of interface (for which another process is responsible) may be needed
+    ! to enforce interface conditions (values are set during exchange with other process)
+
+    if (Bskip) return
+
+    ! initial fields on boundaries
+
+    ! store amplitudes for field perturbations
 
     select case(mode)
     case(2)
@@ -689,27 +726,7 @@ contains
        F4 = (/ P4%vz,P4%sxz,P4%syz /)
     end select
 
-    allocate(bndF%F(m:p,nF),bndF%F0(m:p,nF),bndF%M(m:p,5))
-    bndF%F  = 1d40
-    bndF%F0 = 1d40
-    bndF%M  = 1d40
-
-    allocate(bndF%U( m:p,nU),bndF%DU(m:p,nU))
-    bndF%U  = 0d0
-    bndF%DU  = 1d40
-
-    if (energy_balance) then
-       allocate(bndF%E(m:p),bndF%DE(m:p))
-       bndF%E  = 0d0
-       bndF%DE = 1d40
-    end if
-
-    ! note that boundary fields are allocated (but not initialized with proper values)
-    ! even if process is not responsible for this block -- this is because fields on
-    ! opposite side of interface (for which another process is responsible) may be needed
-    ! to enforce interface conditions (values are set during exchange with other process)
-
-    if (Bskip) return
+    ! then set possibly spatially variable fields
 
     do i = m,p
        A1 = perturb_fields(bnd%x(i),bnd%y(i),P1)
@@ -753,6 +770,8 @@ contains
        A = smooth  (r,1d0,1d0,0d0)
     case('gaussian')
        A = gaussian(r,1d0,1d0,0d0)
+    case('dy_gaussian')
+       A = -(y-P%y0)/(P%Ly**2)*exp(-0.5*(y - P%y0)**2/(P%Ly**2))
     end select
 
   end function perturb_fields
@@ -762,7 +781,8 @@ contains
 
     use utilities, only : step
     use material, only : block_material
-    use mms, only : bessel,inplane_bessel,inplane_fault_mms,mms_sin
+    use mms, only : &
+    bessel,inplane_bessel,inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
 
     implicit none
 
@@ -819,6 +839,26 @@ contains
        F(4) = F(4)+mms_sin(x,y,t,iblock,'sxy')
        F(5) = F(5)+mms_sin(x,y,t,iblock,'syy')
        F(6) = F(6)+mms_sin(x,y,t,iblock,'szz')
+    case('mms-simple')
+       ! verification using method of manufactured solutions
+       ! for curvilinear
+       ! mode II only
+       F(1) = F(1)+mms_simple(x,y,t,iblock,'vx')
+       F(2) = F(2)+mms_simple(x,y,t,iblock,'vy')
+       F(3) = F(3)+mms_simple(x,y,t,iblock,'sxx')
+       F(4) = F(4)+mms_simple(x,y,t,iblock,'sxy')
+       F(5) = F(5)+mms_simple(x,y,t,iblock,'syy')
+       F(6) = F(6)+mms_simple(x,y,t,iblock,'szz')
+    case('mms-hydrofrac')
+       ! verification using method of manufactured solutions
+       ! for curvilinear
+       ! mode II only
+       F(1) = F(1)+mms_hydrofrac(x,y,t,iblock,'vx')
+       F(2) = F(2)+mms_hydrofrac(x,y,t,iblock,'vy')
+       F(3) = F(3)+mms_hydrofrac(x,y,t,iblock,'sxx')
+       F(4) = F(4)+mms_hydrofrac(x,y,t,iblock,'sxy')
+       F(5) = F(5)+mms_hydrofrac(x,y,t,iblock,'syy')
+       F(6) = F(6)+mms_hydrofrac(x,y,t,iblock,'szz')
     end select
 
   end subroutine initial_fields
@@ -1075,10 +1115,10 @@ contains
     type(block_fields),intent(inout) :: BF
     integer,intent(in) :: nU
 
-    if (B%sideL) BF%bndFL%DU = BF%bndFL%DU+BF%bndFL%F(:,1:nU)
-    if (B%sideR) BF%bndFR%DU = BF%bndFR%DU+BF%bndFR%F(:,1:nU)
-    if (B%sideB) BF%bndFB%DU = BF%bndFB%DU+BF%bndFB%F(:,1:nU)
-    if (B%sideT) BF%bndFT%DU = BF%bndFT%DU+BF%bndFT%F(:,1:nU)
+    if (B%sideL) BF%bndFL%DU = BF%bndFL%DU+BF%bndFL%Fhat(:,1:nU)
+    if (B%sideR) BF%bndFR%DU = BF%bndFR%DU+BF%bndFR%Fhat(:,1:nU)
+    if (B%sideB) BF%bndFB%DU = BF%bndFB%DU+BF%bndFB%Fhat(:,1:nU)
+    if (B%sideT) BF%bndFT%DU = BF%bndFT%DU+BF%bndFT%Fhat(:,1:nU)
 
   end subroutine set_rates_boundary
 

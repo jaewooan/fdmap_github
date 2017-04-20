@@ -431,6 +431,7 @@ contains
     w = 2d0*pi
     k = 4d0*pi
 
+
     select case(field)
     case('vx','vy','V')
         ! need to be careful since slip and sxy must have the same sign at the
@@ -531,5 +532,335 @@ contains
 
   end function mms_simple
 
+  function mms_hydrofrac(x,y,t,side,field) result(F)
+
+    use ifport ! for Intel Fortran compiler
+
+    implicit none
+
+    real,intent(in) :: x,y,t
+    integer,intent(in) :: side
+    character(*),intent(in) :: field
+    real :: F
+
+    real :: r2,syy,sxy,sxx,vx,vy,pi
+    real :: vx_t,vx_x,vx_y
+    real :: vy_t,vy_x,vy_y
+    real :: M_x, M_y
+    real :: syy_t,syy_x,syy_y
+    real :: sxy_t,sxy_x,sxy_y
+    real :: sxx_t,sxx_x,sxx_y
+    real :: w,k,A,B,h,kw
+    real :: p,v,u
+    real :: I_w,I_vtp,I_vtm,I_taum,I_taup,s_p,s_v, &
+            vtm,vtp,&
+            bcL_uhat,bcL_phat,bcR_uhat,bcR_phat,dpdx
+
+
+    ! MMS using displacement field:
+    ! ux =   Ax*cos(k*x + k*y + w*t)
+    ! uy = - Ax*cos(k*x + k*y + w*t)
+    ! uz = 0
+
+    !WARNING: These parameters must match the parameters in the input file
+    real :: G,cs = 3d3, cp = 5d3, rho = 2.6d0, lambda, Zs
+    real :: K0 = 1d3, rho0 = 1d0,mu = 1d-6
+    
+    ! Fracture width and crack tips
+    real :: wm0 = -1.0d0, wp0 = 1.0d0, xL = -5d0, xR = 5d0 
+
+    !character(6) :: hf_profile = 'planar'
+    character(10) :: hf_profile = 'non-planar'
+    !character(4) :: hf_profile = 'no-y'
+    
+    cs = 3d0
+    cp = 5d0
+    rho = 2.6d0
+    K0 = 1d0
+    rho0 = 1d0
+    mu = 1d-2
+
+    G = rho*cs**2
+    lambda = rho*cp**2 - 2d0*G
+    Zs = rho*cs
+
+    pi = 4d0 * datan(1d0)
+    w = 2d0*pi ! omega
+    k = 2d0*pi/10d0 ! wave number
+    A = 2d0*pi/(lambda)   ! amplitude
+    B = 1d0 ! Fluid amplitude
+
+    ! Non-planar hydraulic fracture profile
+    h = 0.5d0 ! Wall perturbation amplitude
+    kw = 2d0*pi*2d0 ! Wavenumber
+! Solid
+
+! Velocities:
+vx =  A*w*cos(k*x)*cos(k*y)*cos(t*w)
+vy =  -A*w*cos(k*x)*cos(k*y)*cos(t*w)
+! Stresses:
+sxx =  -2.0*A*G*k*sin(k*x)*sin(t*w)*cos(k*y) + lambda*(-1.0*A*k*sin(k*x)*sin(t*w)*cos(k*y)&
++ 1.0*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+syy =  2.0*A*G*k*sin(k*y)*sin(t*w)*cos(k*x) + lambda*(-1.0*A*k*sin(k*x)*sin(t*w)*cos(k*y)&
++ 1.0*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+sxy =  2*G*(0.5*A*k*sin(k*x)*sin(t*w)*cos(k*y) - 0.5*A*k*sin(k*y)*sin(t*w)*cos(k*x))
+! Source function for momentum balance:
+M_x =  -A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (-2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k*y)&
++ 2*G*(-0.5*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) - 0.5*A*k**2*sin(t*w)*cos(k*x)*cos(k*y))&
++ lambda*(-1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) - 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
+M_y =  A*w**2*sin(t*w)*cos(k*x)*cos(k*y) - (2.0*A*G*k**2*sin(t*w)*cos(k*x)*cos(k*y)&
++ 2*G*(0.5*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 0.5*A*k**2*sin(t*w)*cos(k*x)*cos(k*y))&
++ lambda*(1.0*A*k**2*sin(k*x)*sin(k*y)*sin(t*w) + 1.0*A*k**2*sin(t*w)*cos(k*x)*cos(k*y)))/rho
+
+! Fluid (planar case)
+select case(hf_profile)
+case('planar')
+! Solutions
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  B*w*sin(pi*(-wm0 + y)/(-wm0 + wp0))*cos(k*x)*cos(t*w)
+u =  2*B*w*cos(k*x)*cos(t*w)/pi
+
+! Forcing functions
+
+! Boundary conditions
+
+ bcL_uhat =  2*B*w*cos(k*xL)*cos(t*w)/pi
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  2*B*w*cos(k*xR)*cos(t*w)/pi
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
+! Interface conditions
+
+! Normal velocity
+I_w =  0
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) - pi*B*mu*w*cos(k*x)*cos(t*w)/(-wm0&
++ wp0)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) + pi*B*mu*w*cos(k*x)*cos(t*w)/(-wm0&
++ wp0)
+
+! Governing equations
+
+! Mass balance
+s_p =  k*w*(1.0*pi*A*lambda - 2*B*K0)*sin(k*x)*cos(t*w)/pi
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(-wm0&
++ y)/(-wm0 + wp0))*cos(k*x)*cos(t*w)/(rho0*(-wm0 + wp0)**2) - B*w**2*sin(t*w)*sin(pi*(-wm0&
++ y)/(-wm0 + wp0))*cos(k*x)
+
+! Exact interface conditions
+vtm =  0
+vtp =  0
+
+! Fluid (non-planar case)
+case('non-planar')
+! Solutions
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  B*w*sin(pi*(B + h*sin(k*x) + y)/(2*B + 2*h*sin(k*x)))*cos(k*x)*cos(t*w)
+u =  2*B*w*cos(k*x)*cos(t*w)/pi
+
+! Forcing functions
+
+! Boundary conditions
+
+ bcL_uhat =  2*B*w*cos(k*xL)*cos(t*w)/pi
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  2*B*w*cos(k*xR)*cos(t*w)/pi
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
+! Interface conditions
+
+! Normal velocity
+I_w =  0
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w) + 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
+- pi*B*mu*w*cos(k*x)*cos(t*w)/(2*B + 2*h*sin(k*x))
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w) - 1.0*A*h*k**2*lambda*sin(k*x)*sin(t*w)*cos(k*x)&
++ pi*B*mu*w*cos(k*x)*cos(t*w)/(2*B + 2*h*sin(k*x))
+
+! Governing equations
+
+! Mass balance
+s_p =  k*w*(2.0*pi*A*lambda*(B + h*sin(k*x))*sin(k*x) + 4*B*K0*(-B*sin(k*x)&
+- 2*h*sin(k*x)**2 + h))*cos(t*w)/(2*pi*(B + h*sin(k*x)))
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 + pi**2*B*mu*w*sin(pi*(B&
++ h*sin(k*x) + y)/(2*B + 2*h*sin(k*x)))*cos(k*x)*cos(t*w)/(rho0*(2*B&
++ 2*h*sin(k*x))**2) - B*w**2*sin(t*w)*sin(pi*(B + h*sin(k*x) + y)/(2*B&
++ 2*h*sin(k*x)))*cos(k*x)
+
+! Exact interface conditions
+vtm =  0
+vtp =  0
+case('no-y')
+! Fluid, constant velocity field in y-dir
+! Solutions
+p =  1.0*A*k*lambda*sin(k*x)*sin(t*w)
+v =  w*cos(k*x)*cos(t*w)
+u =  w*cos(k*x)*cos(t*w)
+
+! Forcing functions
+
+! Boundary conditions
+
+ bcL_uhat =  w*cos(k*xL)*cos(t*w)
+ bcL_phat =  1.0*A*k*lambda*sin(k*xL)*sin(t*w)
+ bcR_uhat =  w*cos(k*xR)*cos(t*w)
+ bcR_phat =  1.0*A*k*lambda*sin(k*xR)*sin(t*w)
+
+! Interface conditions
+
+! Normal velocity
+I_w =  0
+! Tangential velocity
+! v - vtm = I_vtm
+I_vtm =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+I_vtp =  -A*w*cos(k*x)*cos(t*w) + w*cos(k*x)*cos(t*w)
+! Tractions
+I_taum =  1.0*A*G*k*sin(k*x)*sin(t*w)
+I_taup =  1.0*A*G*k*sin(k*x)*sin(t*w)
+
+! Governing equations
+
+! Mass balance
+s_p =  k*w*(1.0*A*lambda - K0)*sin(k*x)*cos(t*w)
+! Momentum balance
+s_v =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)/rho0 - w**2*sin(t*w)*cos(k*x)
+
+! Exact interface conditions
+vtm =  w*cos(k*x)*cos(t*w)
+vtp =  w*cos(k*x)*cos(t*w)
+ 
+! Other
+dpdx =  1.0*A*k**2*lambda*sin(t*w)*cos(k*x)
+
+end select
+
+
+
+    ! Fields
+    select case(field)
+    case('vx','vy')
+        select case(field)
+        case('vx')
+            F = vx
+            return
+        case('vy')
+            F = vy
+            return
+        end select
+    case('sxx','syy','sxy')
+        select case(field)
+        case('sxx')
+            F = sxx
+            return
+        case('syy')
+            F = syy
+            return
+        case('sxy')
+            F = sxy
+            return
+        end select
+    ! Source (force function)
+    case('s_vx','s_vy')
+        select case(field)
+        case('s_vx')
+            F = M_x
+            return
+        case('s_vy')
+            F = M_y
+            return
+        end select
+    case('s_sxx','s_syy','s_sxy')
+        select case(field)
+        case('s_sxx')
+            F = 0d0 
+            return
+        case('s_syy')
+            F = 0d0
+            return
+        case('s_xy')
+            F = 0d0
+            return
+        end select
+    case('p','v')
+        select case(field)
+        case('p')
+            F = p
+            return
+        case('v')
+            F = v
+            return
+        end select
+    ! Forcing function for fluid mass and momentum balance
+    case('s_p','s_v')
+        select case(field)
+        case('s_v')
+            F = s_v 
+            return
+        case('s_p')
+            F = s_p
+            return
+        end select
+    ! Forcing function for boundary conditions
+    case('bcL_uhat','bcL_phat','bcR_uhat','bcR_phat')
+        select case(field)
+        case('bcL_uhat')
+            F = bcL_uhat
+            return
+        case('bcL_phat')
+            F = bcL_phat
+            return
+        case('bcR_uhat')
+            F = bcR_uhat
+            return
+        case('bcR_phat')
+            F = bcR_phat
+            return
+        end select
+    ! Forcing function for interface conditions
+    case('I_w','I_vtm','I_vtp','I_taum','I_taup')
+        select case(field)
+        case('I_w')
+            F = I_w
+            return
+        case('I_vtm')
+            F = I_vtm
+            return
+        case('I_vtp')
+            F = I_vtp
+            return
+        case('I_taum')
+            F = I_taum
+            return
+        case('I_taup')
+            F = I_taup
+            return
+        end select
+    case('vtm','vtp')
+        select case(field)
+        case('vtm')
+            F = vtm
+            return
+        case('vtp')
+            F = vtp
+            return
+        end select
+    case('dpdx')
+        F = dpdx
+        return
+    end select
+
+    F = 0d0
+
+  end function mms_hydrofrac
 
 end module mms
