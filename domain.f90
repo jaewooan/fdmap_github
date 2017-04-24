@@ -7,6 +7,7 @@ module domain
   use interfaces, only : iface_type
   use mpi_routines2d, only : cartesian
   use source, only : source_type
+  use acoustic_gravity, only : ag_type
   use basal_traction, only : bt_type
   
   implicit none
@@ -21,7 +22,7 @@ module domain
   end type block_type
 
   type :: domain_type
-     logical :: operator_split,exact_metric,basal_traction_plane_stress
+     logical :: operator_split,exact_metric,basal_traction_plane_stress,acoustic_gravity_waves
      integer :: mode,nblocks_x,nblocks_y,nblocks,nifaces,n
      character(10) :: FDmethod
      character(16) :: method
@@ -33,6 +34,7 @@ module domain
      type(fields_type) :: F
      type(cartesian) :: C
      type(source_type) :: S
+     type(ag_type) :: AG
      type(bt_type) :: BT
   end type domain_type
 
@@ -49,6 +51,7 @@ contains
     use boundaries, only : init_boundaries
     use fd_coeff, only : init_fd
     use source, only : init_source
+    use acoustic_gravity, only : init_acoustic_gravity
     use basal_traction, only : init_basal_traction
     use mpi_routines2d, only : decompose2d,exchange_all_neighbors
     use mpi_routines, only : is_master
@@ -75,12 +78,13 @@ contains
     character(6) :: mpi_method
     character(256) :: str1,str2,str3,str
     logical :: operator_split,decomposition_info,energy_balance,displacement,peak, &
-         basal_traction_plane_stress,exact_metric
+         acoustic_gravity_waves,basal_traction_plane_stress,exact_metric
     logical,parameter :: periodic_x=.false.,periodic_y=.false.
 
     namelist /domain_list/ mode,FDmethod,nblocks_x,nblocks_y,nblocks,nifaces, &
          nx,ny,mpi_method,nprocs_x,nprocs_y,decomposition_info,operator_split, &
-         energy_balance,displacement,exact_metric,peak,basal_traction_plane_stress,nx_list,ny_list
+         energy_balance,displacement,exact_metric,peak,acoustic_gravity_waves, &
+         basal_traction_plane_stress,nx_list,ny_list
 
     namelist /operator_list/ Cdiss
 
@@ -104,6 +108,7 @@ contains
     energy_balance = .false.
     displacement   = .false.
     peak           = .false.
+    acoustic_gravity_waves = .false.
     basal_traction_plane_stress = .false.
     
     mpi_method = '2d'
@@ -143,6 +148,8 @@ contains
 
     D%operator_split = operator_split
 
+    D%acoustic_gravity_waves = acoustic_gravity_waves
+    
     D%basal_traction_plane_stress = basal_traction_plane_stress
     
     ! initial time
@@ -294,6 +301,10 @@ contains
 
     call init_source(D%S,input,echo)
 
+    ! acoustic gravity waves
+
+    if (D%acoustic_gravity_waves) call init_acoustic_gravity(D%AG,D%C,input,echo)
+    
     ! basal tractions for plane stress model
 
     if (D%basal_traction_plane_stress) call init_basal_traction(D%BT,D%C,input,echo)
@@ -374,6 +385,7 @@ contains
     use fields, only : destroy_block_fields,destroy_fields
     use material, only : destroy_elastic
     use interfaces, only : destroy_iface
+    use acoustic_gravity, only : destroy_acoustic_gravity
     use basal_traction, only : destroy_basal_traction
     
     implicit none
@@ -397,6 +409,7 @@ contains
 
     call destroy_fields(D%F)
     call destroy_elastic(D%E)
+    call destroy_acoustic_gravity(D%AG)
     call destroy_basal_traction(D%BT)
 
   end subroutine finish_domain
@@ -553,6 +566,14 @@ contains
           call write_file_distributed(fh,D%F%F(mx:px:sx,my:py:sy,5))
        case('szz')
           call write_file_distributed(fh,D%F%F(mx:px:sx,my:py:sy,6))
+       case('sxx0','sxz0')
+          call write_file_distributed(fh,D%F%S0(mx:px:sx,my:py:sy,1))
+       case('sxy0','syz0')
+          call write_file_distributed(fh,D%F%S0(mx:px:sx,my:py:sy,2))
+       case('syy0')
+          call write_file_distributed(fh,D%F%S0(mx:px:sx,my:py:sy,3))
+       case('szz0')
+          call write_file_distributed(fh,D%F%S0(mx:px:sx,my:py:sy,4))
        case('lambda')
           call write_file_distributed(fh,D%F%lambda(mx:px:sx,my:py:sy))
        case('gammap')
@@ -575,6 +596,8 @@ contains
           call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,5))
        case('epzz')
           call write_file_distributed(fh,D%F%EP(mx:px:sx,my:py:sy,6))
+       case('rhoprime')
+          call write_file_distributed(fh,D%AG%rhoprime(mx:px:sx,my:py:sy))
        case('a')
           call write_file_distributed(fh,D%BT%a(mx:px:sx,my:py:sy))
        case('b')
@@ -941,6 +964,18 @@ contains
        case('szz')
           ok = allocated(D%F%F)
           if (ok) ok = within(lbound(D%F%F,3),6,ubound(D%F%F,3))
+       case('sxx0','sxz0')
+          ok = allocated(D%F%S0)
+          if (ok) ok = within(lbound(D%F%S0,3),1,ubound(D%F%S0,3))
+       case('sxy0','syz0')
+          ok = allocated(D%F%S0)
+          if (ok) ok = within(lbound(D%F%S0,3),2,ubound(D%F%S0,3))
+       case('syy0')
+          ok = allocated(D%F%S0)
+          if (ok) ok = within(lbound(D%F%S0,3),3,ubound(D%F%S0,3))
+       case('szz0')
+          ok = allocated(D%F%S0)
+          if (ok) ok = within(lbound(D%F%S0,3),4,ubound(D%F%S0,3))
        case('lambda')
           ok = allocated(D%F%lambda)
        case('gammap')
@@ -967,6 +1002,8 @@ contains
        case('epzz')
           ok = allocated(D%F%EP)
           if (ok) ok = within(lbound(D%F%EP,3),6,ubound(D%F%EP,3))
+       case('rhoprime')
+          ok = allocated(D%AG%rhoprime)
        case('a')
           ok = allocated(D%BT%a)
        case('b')

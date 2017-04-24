@@ -27,11 +27,11 @@ module fields
   end type block_fields
 
   type :: fields_type
-     character(256) :: problem
-     logical :: displacement,energy_balance,peak
+     character(256) :: problem,prestress_filename
+     logical :: displacement,energy_balance,peak,prestress_from_file
      integer :: nF,nC,nU,ns,nEP
      real :: Etot
-     real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga
+     real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga,S0
      real,dimension(:,:,:),allocatable :: Wx,Wy,DWx,DWy ! PML fields
      real,dimension(:,:),allocatable :: gammap,lambda,Wp
      real,dimension(:),allocatable :: Hx,Hy
@@ -64,7 +64,6 @@ contains
     use utilities, only : deg2rad
     use fd, only : limits,Hnorm
     use material, only : block_material
-    use mms, only : besselA
 
     implicit none
 
@@ -79,8 +78,9 @@ contains
     logical,intent(in) :: energy_balance,displacement,pmlx,pmly,peak
 
     integer :: stat
+    logical :: prestress_from_file
     real :: Psi,vx0,vy0,vz0,sxx0,sxy0,sxz0,syy0,syz0,szz0
-    character(256) :: problem
+    character(256) :: problem,prestress_filename
     character(256) :: str
     ! P5 does not influence boundary conditions only interior
     type(fields_perturb) :: P1,P2,P3,P4,P5
@@ -89,7 +89,8 @@ contains
 
     namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
-         P1,P2,P3,P4,P5,besselA
+         P1,P2,P3,P4,P5, &
+         prestress_from_file,prestress_filename
 
     ! defaults
 
@@ -114,8 +115,9 @@ contains
     P4 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
     P5 = fields_perturb('',0d0,0d0,1d0,1d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0,0d0)
 
-    besselA = 0d0
-
+    prestress_from_file = .false.
+    prestress_filename = ''
+    
     ! read in field parameters
 
     write(str,'(a,i0,a)') '!---BLOCK',iblock,'---'
@@ -129,7 +131,7 @@ contains
     BF%energy_balance = energy_balance
     F%displacement = displacement
     F%peak = peak
-
+    
     select case(F%problem)
     case default
     case('uniform') ! initial velocity = 0 => uniform state variable (set elsewhere)
@@ -202,6 +204,14 @@ contains
       call allocate_array_body(F%DWy,C,F%nF,ghost_nodes=.false.,Fval=0d0)
     end if
 
+    ! initialize prestress, if input from file
+    ! This prestress is stored in F%S0 and is only used by plasticity routines;
+    ! it is assumed (but never verified) that S0 satisfies equilbrium.
+    ! Note that S0 is NOT used by friction routines; those routines require prestress
+    ! to be input as separate (fault prestress) file.
+    
+    if (prestress_from_file) call init_prestress_from_file(F,C,prestress_filename)
+    
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
@@ -274,6 +284,7 @@ contains
     if (allocated(F%Wp     )) deallocate(F%Wp     )
     if (allocated(F%Hx     )) deallocate(F%Hx     )
     if (allocated(F%Hy     )) deallocate(F%Hy     )
+    if (allocated(F%S0     )) deallocate(F%S0     )
 
   end subroutine destroy_fields
 
@@ -614,6 +625,72 @@ contains
   end subroutine checkpoint_block_fields
 
 
+  subroutine init_prestress_from_file(F,C,prestress_filename)
+
+    use mpi_routines2d, only : cartesian,allocate_array_body
+
+    implicit none
+
+    type(fields_type),intent(inout) :: F
+    type(cartesian),intent(in) :: C
+    character(*) :: prestress_filename
+
+    if (.not.allocated(F%S0)) then
+       ! allocate array
+       call allocate_array_body(F%S0,C,F%ns,ghost_nodes=.false.)
+       ! read values from file
+       call prestressIO('read',prestress_filename,C,F)
+    end if
+       
+  end subroutine init_prestress_from_file
+
+
+  subroutine prestressIO(operation,filename,C,F)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,write_file_distributed,close_file_distributed
+    use mpi_routines2d, only : cartesian
+    use mpi_routines, only : pw,is_master
+    use mpi
+
+    implicit none
+
+    character(*),intent(in) :: operation,filename
+    type(cartesian),intent(in) :: C
+    type(fields_type),intent(inout) :: F
+
+    type(file_distributed) :: fh
+    integer :: l,ierr
+
+    if (operation=='delete') then
+       if (is_master) call MPI_file_delete(filename,MPI_INFO_NULL,ierr)
+       return
+    end if
+
+    call open_file_distributed(fh,filename,operation,C%c2d%comm,C%c2d%array_w,pw)
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    select case(operation)
+    case('read')
+       do l = 1,F%ns
+          call  read_file_distributed(fh,F%S0(C%mx:C%px,C%my:C%py,l))
+       end do
+    case('write')
+       do l = 1,F%ns
+          call write_file_distributed(fh,F%S0(C%mx:C%px,C%my:C%py,l))
+       end do
+    end select
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    call close_file_distributed(fh)
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+  end subroutine prestressIO
+  
+  
   subroutine init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,P5,M)
 
     use grid, only : grid_type,block_grid
@@ -781,8 +858,7 @@ contains
 
     use utilities, only : step
     use material, only : block_material
-    use mms, only : &
-    bessel,inplane_bessel,inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
+    use mms, only : inplane_fault_mms,mms_sin,mms_simple,mms_hydrofrac
 
     implicit none
 
@@ -793,20 +869,6 @@ contains
     type(block_material), intent(in) :: M
 
     select case(problem)
-    case('bessel')
-       ! verification using method of manufactured solutions
-       ! (with bessel function solution in interior)
-       ! mode III only
-       F(1) = F(1)+bessel(x,y,t,iblock,'vz')
-       F(2) = F(2)+bessel(x,y,t,iblock,'sxz')
-       F(3) = F(3)+bessel(x,y,t,iblock,'syz')
-    case('inplane-bessel')
-       F(1) = F(1)+inplane_bessel(x,y,t,'vx')
-       F(2) = F(2)+inplane_bessel(x,y,t,'vy')
-       F(3) = F(3)+inplane_bessel(x,y,t,'sxx')
-       F(4) = F(4)+inplane_bessel(x,y,t,'sxy')
-       F(5) = F(5)+inplane_bessel(x,y,t,'syy')
-       F(6) = F(6)+inplane_bessel(x,y,t,'szz')
     case('inplane-fault-mms','inplane-fault-mms-nostate')
        F(1) = F(1)+inplane_fault_mms(x,y,t,iblock,'vx')
        F(2) = F(2)+inplane_fault_mms(x,y,t,iblock,'vy')
@@ -823,7 +885,6 @@ contains
        F(6) = 0d0
     case('gaussian')
        ! verification using method of manufactured solutions
-       ! (with bessel function solution in interior)
        ! mode III only
        F(1) = F(1)+100d0*exp(-sqrt((x-0d0)**2 + (y+150d0)**2)/2.5d0)
        F(2) = F(2)+100d0*exp(-sqrt((x-0d0)**2 + (y+150d0)**2)/2.5d0)
@@ -864,7 +925,7 @@ contains
   end subroutine initial_fields
 
 
-  subroutine initial_stress(s,x,y,s0,problem,mode)
+  subroutine initial_stress(s,x,y,s0,problem,mode,s0_file)
 
     ! used only by plasticity routines
 
@@ -876,8 +937,7 @@ contains
     real,intent(in) :: x,y,s0(6)
     character(*),intent(in) :: problem
     integer,intent(in) :: mode
-
-    real :: dip
+    real,intent(in),optional :: s0_file(:)
 
     ! sxx  sxy  sxz  syy  syz  szz
     ! s(1) s(2) s(3) s(4) s(5) s(6)
@@ -902,6 +962,20 @@ contains
        end select
     end select
 
+    ! add prestress that was input in file
+    if (present(s0_file)) then
+       select case(mode)
+       case(2)
+          s(1) = s(1)+s0_file(1) ! sxx
+          s(2) = s(2)+s0_file(2) ! sxy
+          s(4) = s(4)+s0_file(3) ! syy
+          s(6) = s(6)+s0_file(4) ! szz
+       case(3)
+          s(3) = s(3)+s0_file(1) ! sxz
+          s(5) = s(5)+s0_file(2) ! syz
+       end select
+    end if
+    
   end subroutine initial_stress
 
 

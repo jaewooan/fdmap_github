@@ -546,7 +546,7 @@ contains
 
   subroutine solve_friction(FR,V,S,O,N,S0,N0,phip,phis,eta,D,Psi,i,x,y,t,info,dt)
 
-    use mms, only : bessel,inplane_fault_mms
+    use mms, only : inplane_fault_mms
     use io, only : error
 
     implicit none
@@ -720,13 +720,6 @@ contains
        case default
           call newton_solver(FR%friction_law,rs,V,S,Slock,N,eta,Psi,x,y,t,info,fail)
           if (fail) call newton_solver(FR%friction_law,rs,V,S,Slock,N,eta,Psi,x,y,t,.true.,fail)
-       case('bessel')
-          Vex = bessel(x,y,t,1,'V')
-          Sex = bessel(x,y,t,1,'S')
-          Psiex = rs%a*log(2d0*rs%V0*sinh(Sex/(rs%a*N))/Vex)
-          !if (x==0d0) print *, 'ex',x,t,Vex,Sex,Psiex
-          call newton_solver(FR%friction_law,rs,V,S,Slock,N,eta,Psiex,x,y,t,info,fail)
-          if (fail) call newton_solver(FR%friction_law,rs,V,S,Slock,N,eta,Psiex,x,y,t,.true.,fail)
        case('inplane-fault-mms-nostate')
           Vex = inplane_fault_mms(x,y,t,1,'V')
           Sex = inplane_fault_mms(x,y,t,1,'S')

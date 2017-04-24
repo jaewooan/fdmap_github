@@ -91,9 +91,9 @@ endif
 
 # Files
 
-Files = basal_traction.f90 boundaries.f90 checkpoint.f90 domain.f90 energy.f90 \
-	interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 fields.f90 \
-	geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
+Files = acoustic_gravity.f90 basal_traction.f90 boundaries.f90 checkpoint.f90 \
+	domain.f90 energy.f90 interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 \
+	fields.f90 geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
 	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \
 	rates.f90 rates_heterogeneous.f90 source.f90 thermpres.f90 \
 	time_step.f90 tsunami.f90 utilities.f90
@@ -124,25 +124,20 @@ $(IOExe): $(IOObs)
 clean:
 	rm -f *.o *.mod $(Exe) $(IOExe)
 
-intel:
-	sed 's/!use ifport/use ifport/g' mms.f90 > temp.f90 && \
-	mv temp.f90 mms.f90
-
-notintel:
-	sed 's/ use ifport/ !use ifport/g' mms.f90 > temp.f90 && \
-	mv temp.f90 mms.f90
-
 .SUFFIXES: .o .f90
 
 # DO NOT DELETE THIS LINE - used by make depend
+acoustic_gravity.o: fields.o io.o material.o mpi_routines.o mpi_routines2d.o
+
 basal_traction.o: fields.o io.o mpi_routines.o mpi_routines2d.o
 
 boundaries.o: fields.o geometry.o grid.o io.o mms.o mpi_routines.o tsunami.o
 
 checkpoint.o: domain.o fields.o interfaces.o io.o mpi_routines.o
 
-domain.o: basal_traction.o boundaries.o fd_coeff.o fields.o grid.o interfaces.o io.o
-domain.o: material.o mpi_routines.o mpi_routines2d.o source.o utilities.o
+domain.o: acoustic_gravity.o basal_traction.o boundaries.o fd_coeff.o fields.o
+domain.o: grid.o interfaces.o io.o material.o mpi_routines.o mpi_routines2d.o
+domain.o: source.o utilities.o
 
 energy.o: domain.o fields.o geometry.o grid.o material.o mpi_routines.o
 energy.o: mpi_routines2d.o
@@ -192,9 +187,9 @@ testio.o: io.o mpi_routines.o mpi_routines2d.o
 
 thermpres.o: io.o mpi_routines.o
 
-time_step.o: basal_traction.o domain.o energy.o fields.o grid.o interfaces.o io.o
-time_step.o: material.o mpi_routines2d.o output.o plastic.o rates.o rates_heterogeneous.o
-time_step.o: source.o
+time_step.o: acoustic_gravity.o basal_traction.o domain.o energy.o fields.o
+time_step.o: grid.o interfaces.o io.o material.o mpi_routines2d.o output.o
+time_step.o: plastic.o rates.o rates_heterogeneous.o source.o
 
 
 utilities.o: io.o

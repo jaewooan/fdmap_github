@@ -42,7 +42,11 @@ contains
              Kel = M%K
           end if
 
-          call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode)
+          if (allocated(F%S0)) then
+             call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode,F%S0(i,j,:))
+          else
+             call initial_stress(s0,G%x(i,j),G%y(i,j),BF%F0(4:9),F%problem,mode)
+          end if
           call plastic_flow(F%DF(i,j,F%nU+1:F%nF),F%lambda(i,j), &
                M,Gel,Kel,mode,F%F(i,j,F%nU+1:F%nF),F%gammap(i,j),s0,dt,ep,Wp)
 

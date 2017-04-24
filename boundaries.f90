@@ -155,7 +155,6 @@ contains
   subroutine set_bc_mode3(Fhat,F,F0,normal,bc,Zs,x,y,t,iblock)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use mms, only : bessel
     use io, only : error
 
     implicit none
@@ -181,23 +180,11 @@ contains
     select case(bc)
     case default
        call rotate_fields_xy2nt(F-F0,normal,vzFD,stzFD,snzFD)
-    case('bessel-v','bessel-w')
-       call rotate_fields_xy2nt(F   ,normal,vzFD,stzFD,snzFD)
     end select
 
     ! then enforce BC
 
     select case(bc)
-    case('bessel-v')
-       vz = bessel(x,y,t,iblock,'vz')
-       snz = snzFD-Zs*(vzFD-vz)
-    case('bessel-w')
-       Fe(1) = bessel(x,y,t,iblock,'vz')
-       Fe(2) = bessel(x,y,t,iblock,'sxz')
-       Fe(3) = bessel(x,y,t,iblock,'syz')
-       call rotate_fields_xy2nt(Fe,normal,vzEX,stzEX,snzEX)
-       vz = 0.5d0*(vzEX+vzFD+Zsi*(snzEX-snzFD))
-       snz = 0.5d0*(snzEX+snzFD+Zs*(vzEX-vzFD))
     case('absorbing')
        vz   = 0.5d0*( vzFD-Zsi*snzFD)
        snz  = 0.5d0*(snzFD-Zs * vzFD)
@@ -221,8 +208,6 @@ contains
     select case(bc)
     case default
        Fhat = Fhat+F0
-    case('bessel-v','bessel-w')
-       ! initial fields not required 
     end select
 
   end subroutine set_bc_mode3
@@ -231,7 +216,7 @@ contains
   subroutine set_bc_mode2(Fhat,F,F0,U,rhog,normal,bc,Zs,Zp,gamma,x,y,t,iblock,problem)
 
     use fields, only : rotate_fields_xy2nt,rotate_fields_nt2xy
-    use mms, only : mms_sin,inplane_bessel,inplane_fault_mms,mms_hydrofrac
+    use mms, only : mms_sin,inplane_fault_mms,mms_hydrofrac
     use tsunami, only : seafloor_velocity
     use geometry, only : rotate_xy2nt
     use io, only : error
@@ -260,7 +245,7 @@ contains
     select case(bc)
     case default
        call rotate_fields_xy2nt(F-F0,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
-    case('inplane-bessel-w','mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+    case('mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
        call rotate_fields_xy2nt(F  ,normal,vtFD,vnFD,sttFD,sntFD,snnFD,szzFD)
     end select
 
@@ -268,16 +253,9 @@ contains
 
     select case(bc)
        
-    case('inplane-bessel-w','mms-sin-w','inplane-fault-mms-w','mms-hydrofrac-w') ! MMS
+    case('mms-sin-w','inplane-fault-mms-w','mms-hydrofrac-w') ! MMS
        
        select case(bc)
-       case('inplane-bessel-w')
-          FEX(1) = inplane_bessel(x,y,t,'vx')
-          FEX(2) = inplane_bessel(x,y,t,'vy')
-          FEX(3) = inplane_bessel(x,y,t,'sxx')
-          FEX(4) = inplane_bessel(x,y,t,'sxy')
-          FEX(5) = inplane_bessel(x,y,t,'syy')
-          FEX(6) = 0d0
        case('inplane-fault-mms-w')
           FEX(1) = inplane_fault_mms(x,y,t,iblock,'vx')
           FEX(2) = inplane_fault_mms(x,y,t,iblock,'vy')
@@ -392,7 +370,7 @@ contains
     select case(bc)
     case default
        Fhat = Fhat+F0
-    case('inplane-bessel-w','mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
+    case('mms-sin-w','mms-hydrofrac-w','inplane-fault-mms-w','rigid-0','absorbing-0','free-0')
        ! initial fields not required 
     end select
     
