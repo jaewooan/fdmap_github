@@ -856,7 +856,7 @@ contains
 
     ! shear prestress
 
-    S0 = stz0p ! = stz0m (this stress component is continuous across interface)
+    S0 = snz0p ! = snz0m (this stress component is continuous across interface)
     
     ! effective normal stress contribution from resolving in-plane prestress field onto fault
 
