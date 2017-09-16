@@ -20,7 +20,7 @@ program main
        tnuc_min,tnuc_max,minV, &
        walltime_start,walltime_total,walltime_per_step_ave, &
        walltime1,walltime2,walltime_per_step
-  logical :: abort,slipping,constant_dt,final_step,solid
+  logical :: abort,slipping,constant_dt,final_step,solid,adjoint
   type(RK_type) :: RK
   type(domain_type) :: D
   type(output_list) :: outlist
@@ -83,7 +83,7 @@ program main
 
   ! initialize checkpointing
 
-  call init_checkpoint(name,C,input,nstart)
+  call init_checkpoint(name,C,input,nstart,adjoint)
 
   ! copy input file
 
@@ -151,7 +151,7 @@ program main
 
   D%t = t+dble(C%begin)*dt
   D%n = C%begin
-  call checkpoint_read(name,C,D)
+  call checkpoint_read(name,C,D,adjoint,D%mode)
 
   ! initialization complete
 
@@ -195,7 +195,7 @@ program main
 
      ! write new checkpoint and delete previous checkpoint after successful write
 
-     call checkpoint_write_delete(name,n,C,D,abort)
+     call checkpoint_write_delete(name,n,C,D,abort,adjoint,D%mode)
 
      ! status update
      
