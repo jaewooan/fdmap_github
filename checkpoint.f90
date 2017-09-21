@@ -67,6 +67,7 @@ contains
     C%begin = begin
     C%interval = interval
     C%max_time = max_time
+!    C%adjoint = adjoint
 
     ! open checkpoint number file (master only)
     ! if resuming from last checkpoint, determine its number (supersedes value from input file)
