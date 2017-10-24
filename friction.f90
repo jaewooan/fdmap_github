@@ -613,6 +613,14 @@ contains
     O = 0d0
     N = Nlock
 
+    ! if normal stress is tensile, then set shear strength to zero and return
+
+    if (Nlock<=0d0) then
+       S = 0d0
+       V = Slock/eta
+       return
+    end if
+    
     ! lock fault outside specified region, specified in rotated coordinates
     
     xx =  x*cos(FR%angle)+y*sin(FR%angle) ! distance along fault
