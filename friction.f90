@@ -592,7 +592,7 @@ contains
     integer,intent(in) :: i
     logical,intent(in) :: info
 
-    ! fail = true if nonlinear solver failed
+    ! info = true if nonlinear solver failed
     ! Nlock, Slock = normal, shear stresses acting on interface in absence of further opening, slip
     ! Sk = fault strength, kinematically forced
     ! xm,xp,fkm,fkp = kinematic forcing
@@ -632,7 +632,8 @@ contains
 
     ! initialize Nreg
     if (dt==0d0) then ! true if t=0
-       Nreg = N0
+       Nreg = N
+       ! print *, 'Hello'
     end if 
 
     ! regularization to prevent N from going negative
