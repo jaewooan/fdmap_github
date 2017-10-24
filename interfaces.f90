@@ -877,7 +877,7 @@ contains
 
     ! solve for V,S,O,N by enforcing friction law
         
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),FR%Nreg(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snzp = FR%S(i)-FR%S0(i)
     snzm = FR%S(i)-FR%S0(i)
@@ -979,7 +979,7 @@ contains
 
     ! solve for V,S,O,N by enforcing friction law and no opening
 
-    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
+    call solve_friction(FR,FR%V(i),FR%S(i),FR%O(i),FR%N(i),FR%Nreg(i),S0,N0,phip,phis,etas,FR%D(i),FR%Psi(i),i,x,y,t,.false.,dt)
 
     snnp = -(FR%N(i)-FR%N0(i))/(1d0-FR%skempton)
     snnm = -(FR%N(i)-FR%N0(i))/(1d0-FR%skempton)
