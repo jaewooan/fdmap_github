@@ -153,7 +153,7 @@ contains
 
        select case(FR%friction_law)
 
-       case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+       case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RAL')
           call write_matlab(echo,'Psi0' ,Psi0 ,FRstr)
           call write_matlab(echo,'rs.a' ,rs%a ,FRstr)
           call write_matlab(echo,'rs.b' ,rs%b ,FRstr)
@@ -246,7 +246,7 @@ contains
     FR%DNreg = 1d40
 
     select case(FR%friction_law)
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RAL')
        allocate(FR%rs%a(m:p),FR%rs%b(m:p),FR%rs%V0(m:p),FR%rs%f0(m:p),FR%rs%L(m:p),FR%rs%fw(m:p),FR%rs%Vw(m:p))
        FR%rs%a  = rs%a
        FR%rs%b  = rs%b
@@ -380,7 +380,7 @@ contains
 
     select case(FR%friction_law)
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RSLrate')
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RSLrate','RAL')
        
        call read_file_distributed(fh,FR%rs%a )
        call read_file_distributed(fh,FR%rs%b )
@@ -746,7 +746,7 @@ contains
           S = Slock
        end if
 
-    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate') ! rate-and-state friction
+    case('SL','FL','RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RAL') ! rate-and-state friction
 
        call ratestate_param(i,x,y,FR,rs)
 
@@ -1033,7 +1033,7 @@ contains
           dSdV = N*rs%a/absV
        end if
 
-    case('RSL','RFL','RSF','RSL-mms','RSL-mms-nostate')
+    case('RSL','RFL','RSF','RSL-mms','RSL-mms-nostate','RAL')
 
        O = 0.5d0/rs%V0*exp(Psi/rs%a)
        S = rs%a*N*arcsinh(O*V)
@@ -1061,7 +1061,7 @@ contains
     select case(friction_law)
     case('SL','FL')
        V = sign(rs%V0*exp(-Psi/rs%a)*exp(abs(SaN)),SaN)
-    case('RSL','RFL','RSL-mms','RSL-mms-nostate')
+    case('RSL','RFL','RSL-mms','RSL-mms-nostate','RAL')
        V = 2d0*rs%V0*exp(-Psi/rs%a)*sinh(SaN)
     end select
 
@@ -1214,6 +1214,12 @@ contains
        fss = rs%fw+(fLV-rs%fw)/(1d0+(V/rs%Vw)**8)**0.125d0
        Psiss = rs%a*log(2d0*rs%V0/absV*sinh(fss/rs%a))
        DPsi = (absV/rs%L)*(Psiss-Psi)
+
+    case('RAL')
+
+       fss = rs%f0-(rs%b-rs%a)*log(absV/rs%V0)
+       frs = rs%a*arcsinh(0.5d0*absV/rs%V0*exp(Psi/rs%a))
+       DPsi = (rs%b*rs%V0/rs%L)*(exp((rs%f0-Psi)/rs%b)-absV/rs%V0)
 
     case default
 
