@@ -68,8 +68,8 @@ contains
     character(256) :: FRstr
     character(256) :: str
 
-    logical :: force,friction_file,stress_file,strength_file,reg
-    character(256) :: friction_law,problem,rup_field,filename,stress_filename,strength_filename
+    logical :: force,friction_file,stress_file,strength_file,state_file,reg
+    character(256) :: friction_law,problem,rup_field,filename,stress_filename,strength_filename,state_filename
     real :: Psi0,angle,rup_threshold,uni_x0,uni_dSdx,xlockm,xlockp,flock,skempton,Sf0
     type(ratestate_constant) :: rs
     type(slipweak_constant) :: sw
@@ -77,7 +77,8 @@ contains
     type(load) :: ld
 
     namelist /friction_list/ force,friction_law,problem,friction_file, &
-                             filename,stress_file,stress_filename,Psi0,     &
+                             filename,stress_file,stress_filename, &
+                             state_file, state_filename, Psi0,     &
                              angle,rs,sw,kn,ld,rup_field,rup_threshold,uni_x0, &
                              uni_dSdx,xlockm,xlockp,flock,skempton,Sf0,        &
                              strength_file,strength_filename,reg
@@ -90,9 +91,11 @@ contains
     friction_file = .false.
     stress_file   = .false.
     strength_file = .false.
+    state_file = .false.
     filename = ''
     stress_filename = ''
     strength_filename = ''
+    state_filename = ''
     Psi0 = 0d0
     angle = 0d0
     rs = ratestate_constant(0.01d0,0.014d0,1d-6,0.6d0,0.4d0,0.2d0,1d20)
@@ -305,6 +308,14 @@ contains
        if (process_p) call read_strength(FR,strength_filename,comm_p,array)
     end if
 
+    if (state_file) then
+       !allocate(FR%Psi0(m:p))
+       !FR%Psi0(m:p) = 1d40
+
+       ! both sides read file (so process may read file twice)
+       if (process_m) call read_state(FR,state_filename,comm_m,array)
+       if (process_p) call read_state(FR,state_filename,comm_p,array)
+    end if
 
   end subroutine init_friction
 
@@ -457,6 +468,28 @@ contains
 
   end subroutine read_strength
 
+
+  subroutine read_state(FR,filename,comm,array)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,close_file_distributed
+    use mpi_routines, only : pw
+
+    implicit none
+
+    type(fr_type),intent(inout) :: FR
+    character(*),intent(in) :: filename
+    integer,intent(in) :: comm,array
+
+    type(file_distributed) :: fh
+
+    call open_file_distributed(fh,filename,'read',comm,array,pw)
+
+    call read_file_distributed(fh,FR%Psi)
+    
+    call close_file_distributed(fh)
+
+  end subroutine read_state
 
   subroutine checkpoint_friction(fh,operation,FR)
 
