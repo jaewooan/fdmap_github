@@ -309,9 +309,6 @@ contains
     end if
 
     if (state_file) then
-       !allocate(FR%Psi0(m:p))
-       !FR%Psi0(m:p) = 1d40
-
        ! both sides read file (so process may read file twice)
        if (process_m) call read_state(FR,state_filename,comm_m,array)
        if (process_p) call read_state(FR,state_filename,comm_p,array)
