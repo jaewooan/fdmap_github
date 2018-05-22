@@ -4,8 +4,9 @@ module source
 
   type :: source_type
      logical :: use_gravity,use_singular_source
+     character(256) :: source_time_function
      real :: gx,gy,gz ! components of gravitational acceleration
-     real :: x0,y0,T,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy ! point force and moment tensor
+     real :: x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy ! point force and moment tensor
   end type source_type
 
 contains
@@ -21,10 +22,11 @@ contains
     type(source_type),intent(out) :: S
     integer,intent(in) :: input,echo
 
-    real :: gx,gy,gz,x0,y0,T,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy
+    real :: gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy
+    character(256) :: source_time_function
     integer :: stat
 
-    namelist /source_list/ gx,gy,gz,x0,y0,T,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy
+    namelist /source_list/ gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,source_time_function
 
     ! defaults
 
@@ -34,7 +36,8 @@ contains
 
     x0 = 0d0
     y0 = 0d0
-    T = 1d0
+    t_duration = 1d0
+    t_center = 0d0
 
     Fx = 0d0
     Fy = 0d0
@@ -45,6 +48,8 @@ contains
     Myy = 0d0
     Mzx = 0d0
     Mzy = 0d0
+
+    source_time_function = 'gaussian'
 
     ! read in source parameters
         
@@ -62,8 +67,9 @@ contains
 
     S%x0 = x0
     S%y0 = y0
-    S%T = T
-
+    S%t_duration = t_duration
+    S%t_center = t_center
+    
     S%Fx = Fx
     S%Fy = Fy
     S%Fz = Fz
@@ -74,6 +80,8 @@ contains
     S%Mzx = Mzx
     S%Mzy = Mzy
 
+    S%source_time_function = source_time_function
+    
     ! output source parameters
 
     if (is_master) then
@@ -82,7 +90,8 @@ contains
        call write_matlab(echo,'gz',S%gz,'S')
        call write_matlab(echo,'x0',S%x0,'S')
        call write_matlab(echo,'y0',S%y0,'S')
-       call write_matlab(echo,'T',S%T,'S')
+       call write_matlab(echo,'t_duration',S%t_duration,'S')
+       call write_matlab(echo,'t_center',S%t_center,'S')
        call write_matlab(echo,'Fx',S%Fx,'S')
        call write_matlab(echo,'Fy',S%Fy,'S')
        call write_matlab(echo,'Fz',S%Fz,'S')
@@ -91,6 +100,7 @@ contains
        call write_matlab(echo,'Myy',S%Myy,'S')
        call write_matlab(echo,'Mzx',S%Mzx,'S')
        call write_matlab(echo,'Mzy',S%Mzy,'S')
+       call write_matlab(echo,'source_time_function',S%source_time_function,'S')
     end if
 
   end subroutine init_source
@@ -164,10 +174,18 @@ contains
        ax = (S%x0-G%x(i0,B%my))/hx
        ay = (S%y0-G%y(B%mx,j0))/hy
 
-       !A = min(t/S%T,1d0) ! ramp in time
-       !A = sqrt(t)
-       !A = sin(2d0*pi*t/S%T) ! sinusoid
-       A = exp(-0.5d0*(t-4d0*S%T)**2/S%T**2) ! Gaussian source time function
+       select case(S%source_time_function)
+       case('ramp')
+          A = max(min((t-S%t_center)/S%t_duration,1d0),0d0) ! ramp in time
+       case('sinusoid')
+          A = sin(2d0*pi*(t-S%t_center)/S%t_duration) ! sinusoid
+       case('gaussian')
+          A = exp(-0.5d0*(t-S%t_center)**2/S%t_duration**2) ! Gaussian
+       case('Ricker')
+          A = (1d0-2d0*pi**2*(t-S%t_center)**2/S%t_duration**2)*exp(-pi**2*(t-S%t_center)**2/S%t_duration**2) ! Ricker wavelet
+       case default
+          call error('Invalid source time function','set_source')
+       end select
        
        do j = B%my,B%py
           do i = B%mx,B%px
