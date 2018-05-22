@@ -1,0 +1,68 @@
+! point moment tensor source simulations for Ossian
+! (to help him test his free surface BC, SCEC 2018 project)
+
+&problem_list
+ name = 'data/point_r1', nt = 401, CFL = 0.5d0,
+ refine = 1d0, ninfo = 10 /
+
+&domain_list
+ mode = 2, nblocks_x = 1, nblocks_y = 2, nifaces = 1, nx = 201, ny = 52 /
+
+!---BLOCK1---
+
+! ROCK
+
+&grid_list
+ nx = 201, ny = 26, mgx = 1, mgy = 1,
+ LT = -20d0, -5d0, RT = 20d0, -5d0,
+ LB = -20d0,-10d0, RB = 20d0,-10d0 /
+
+&boundaries_list
+ bcL = 'absorbing', bcR = 'absorbing', bcB = 'absorbing', bcT = 'none' /
+
+&source_list
+ x0 = 0d0, y0 = -1d0, t_center = 2d0, t_duration = 1.0417d0, source_time_function = 'Ricker',
+ Mxx = 1d0, Myy = 1d0, Mxy = 0d0 /
+
+!---BLOCK2---
+
+! SOIL
+
+&grid_list
+ nx = 201, ny = 26, mgx = 1, mgy = 27,
+ LT = -20d0, 0d0, RT = 20d0, 0d0,
+ LB = -20d0,-5d0, RB = 20d0,-5d0 /
+
+&boundaries_list
+ bcL = 'absorbing', bcR = 'absorbing', bcB = 'none', bcT = 'free' /
+
+!---ALL_BLOCKS---
+
+&material_list
+ rho = 2.8d0, cs = 1.2d0, cp = 3d0,
+ heterogeneous = true, filename = 'problems/point_heterogeneous' /
+
+!---IFACE1---
+
+&interface_list
+ coupling = 'locked', iblockm = 1, iblockp = 2, 
+ direction = 'y', mg = 1, pg = 201 /
+
+!---begin:output_list---
+B
+body
+x y
+0d0 0d0 1
+B
+body
+vx vy sxx sxy syy
+0d0 1d10 10
+S
+bndT2
+ux uy vx vy sxx syy sxy
+0d0 1d10 1
+S
+bndT2
+x y
+0d0 0d0 1
+!---end:output_list---
