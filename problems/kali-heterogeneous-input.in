@@ -1,0 +1,76 @@
+! verification test for Kali's scycle code,
+! rate-and-state friction (aging law), mode III,
+! heterogeneous prestress, friction, state (from file)
+
+&problem_list
+ name = 'data/kali_het', ninfo = 10,
+ nt = 2001, CFL = 0.5d0, refine = 1d0/
+
+&domain_list
+ mode = 3, nx = 301, ny = 602,
+ nblocks = 2, nblocks_x = 2, nblocks_y = 1, nifaces = 1 /
+
+!---BLOCK1---
+
+&grid_list
+ nx = 301, ny = 301, mgx = 1, mgy = 1, iblock_x = 1, iblock_y = 1,
+ LT = -30d0,  0d0, RT = 0d0,  0d0,
+ LB = -30d0,-30d0, RB = 0d0,-30d0 /
+
+&boundaries_list
+ bcL = 'absorbing', bcR = 'none', bcB = 'absorbing', bcT = 'free' /
+
+!---BLOCK2---
+
+&grid_list
+ nx = 301, ny = 301, mgx = 302, mgy = 1, iblock_x = 2, iblock_y = 1,
+ LT = 0d0,  0d0, RT = 30d0,  0d0,
+ LB = 0d0,-30d0, RB = 30d0,-30d0 /
+
+&boundaries_list
+ bcL = 'none', bcR = 'absorbing', bcB = 'absorbing', bcT = 'free' /
+
+!---ALL BLOCKS---
+
+&material_list
+ rho = 2.7d0, cs = 3.4641d0, cp = 6d0 /
+
+&fields_list
+ sxx0 = -50d0,  ! normal stress
+ sxz0 =  30d0 / ! shear stress
+
+!---IFACE1---
+
+&interface_list
+ coupling = 'friction', iblockm = 1, iblockp = 2, 
+ direction = 'x', mg = 1, pg = 301 /
+
+&friction_list
+ angle = 90d0, xlockm = -25d0, xlockp = 25d0,
+ friction_law = 'RAL',
+ friction_file = T, filename = 'problems/kali.friction',
+ stress_file = T,stress_filename = 'problems/kali.prestress',
+ state_file = T, state_filename = 'problems/kali.state',
+ Psi0 = 0.6d0, ! initial state (only if state_file = F)
+ rs = 0.01d0,0.016d0,1d-6,0.6d0,0.05d0, ! a,b,V0,f0,L (only if friction_file = F)
+ ld = 'gaussian',5d0,0d0,1d-9,4d0,-15d0,0d0 / ! stress perturbation: shape,shear stress amplitude,normal stress amplitude,time scale,width,center in x,center in y
+
+!---begin:output_list---
+I
+iface1
+x y
+0d0 0d0 1
+I
+iface1
+D V S N Psi
+0d0 1d10 1
+B
+body
+x y
+0d0 0d0 1
+B
+body
+vz sxz syz
+0d0 1d10 10
+!---end:output_list---
+
