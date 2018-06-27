@@ -33,11 +33,11 @@ endif
 # Stanford CEES
 
 ifeq ($(findstring cees,$(HOST)),cees)
- F95 = mpif90 -r8 -i4 -i_dynamic
+ F95 = mpif90 -r8 -i4
  LD = mpif90
  ifeq ($(BUILD),debug)
-  F95FLAGS =  -g -check all -check noarg_temp_created -warn all \
-	-traceback -ftrapuv -fpe0 -fp-stack-check -fltconsistency -std03
+  F95FLAGS =  -g -O0 -init=snan,arrays -traceback -check all -check noarg_temp_created \
+	-warn all -ftrapuv -fpe0 -fp-stack-check -std03
  endif
  ifeq ($(BUILD),profile)
   F95FLAGS = -g -pg
