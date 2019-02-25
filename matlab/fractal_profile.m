@@ -1,30 +1,31 @@
-% fractal fault profile
-% November 13, 2012
+% self-similar fractal fault profile
+% Eric M. Dunham
+% original: November 13, 2012
+% modified: February 25, 2019 (added comments)
 
 % fault length L, grid spacing h=L/N
 % periodicity is assumed for profile, so y(L/2)=y(-L/2)
 
-% NODE: fault will have ODD number N+1 grid points located at nodes
+% NOTE: fault will have ODD number N+1 grid points located at nodes
 % x = [-L/2:h:L/2] (length L, grid spacing h=L/N)
 % Fourier method will give N points with replica length L
+% so an extra point, at same (x,y) as first point, is appended at end
 
-write_files = false;
-endian = 'l';
+write_files = false; % write files in FDMAP format
+endian = 'n'; % endian of binary files
 
-N = 1000;
-r = 10; % refinement factor
-N = N*r;
-h = 0.1/r;
+r = 1; % mesh refinement factor
+N = 1000*r; % number of grid points minus one
+h = 0.1/r; % grid spacing
 
-alpha = 10^(-2); % roughness
+alpha = 10^(-2); % amplitude-to-wavelength ratio of roughness
 cutoff = true; Lmin = 20*h; % minimum wavelength (nominally 20*h)
 
 L = N*h; % profile length
 x = [-L/2:h:L/2]; % coordinate at nodes
 
-flip_profile = false; % flip profile
 shift_profile = true; % shift profile in y direction so that yend=0
-x_shift = 0;%-15; % shift profile in x direction by this amount
+x_shift = 0; % shift profile in x direction by this amount
 
 % wavenumber
   
@@ -36,11 +37,11 @@ k = k*kN;
 
 % white noise, unit normal distribution
 
-seed = 17; % 8, 27flipr4 (quite good), 1r16 (quite good)
+seed = 17; % seed, set to specific value to get exactly same profile
 s = RandStream.create('mt19937ar','seed',seed);
 RandStream.setGlobalStream(s);
 
-y = randn([1,N]);
+y = randn([1,N]); % Gaussian white noise
 
 % scale so PSD has unit amplitude
 
@@ -72,17 +73,15 @@ if cutoff
   Y(I) = 0;
 end
 
-% inverse FFT
+% inverse FFT, explointing conjugate symmetry of real-valued function
 
-y = ifft(Y)/h;
-y = real(y); % just to clean up
+y = ifft(Y,'symmetric')/h;
 
-% calculate slope
+% calculate fault slope
 
 k(N/2+1) = 0; % no Nyquist for spectral differentiation
 M = i*k.*Y;
-m = ifft(M)/h;
-m = real(m);
+m = ifft(M,'symmetric')/h;
   
 % convert slope into unit normals
 
@@ -107,27 +106,26 @@ PSDy_exact = PSDy_exact(1:N/2+1);
 
 %return
 
-% repeat first point, flip and shift if needed
+% repeat first point, shift if needed
 
 y = [y y(1)];
 n = [n; n(1,:)];
-if flip_profile, y=-y; n(:,1)=-n(:,1); end
 x = x-x_shift;
 
 xend = [-L/2 L/2]-x_shift; % endpoints of fault
 yend = y(1); if shift_profile, y = y-yend; yend = 0; end
 
-% plot unrotated profile (with vertical exaggeration)
+% plot profile (with vertical exaggeration)
 
 clf,subplot(2,1,1)
 plot(x,y,'b-',xend,yend,'ko')
-disp('unrotated (not to scale)')
+disp('(not to scale)')
 
-% unit normal
+% rotate profile for dipping faults, given unit normal of nominal surface
 
-nhat = [0 -1];
+nhat = [0 -1]; % unit normal of nominal surface
 [n(:,1),n(:,2)] = rotate_nt2xy_vec(n(:,1),n(:,2),nhat);
-  
+
 % plot profile to scale
 
 subplot(2,1,2)
@@ -137,9 +135,9 @@ axis image
 
 if write_files % write files
 
-  disp('FIX FILE NAME'),return
+  disp('USER CAN SET DIFFERENT FILE NAME'),return
   name = ['~/fdmap/profiles/alpha' sprintf('%2.0f',alpha) 'N' num2str(N+1) 'seed' num2str(seed)];
-  write_profile(name,x,y,n,endian)
+  fdmap_write_profile(name,x,y,n,endian)
   disp(['wrote profile ' name])
 
 end
