@@ -1,4 +1,4 @@
-function fdmap_write_ratestate_friction(name,Psi)
+function fdmap_write_state(name,Psi)
     
     % write file
 
