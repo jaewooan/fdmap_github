@@ -1112,7 +1112,11 @@ contains
        FR%DDs(i) = FR%DDs(i)+FR%V(i) ! shear (tangential) displacement discontinuity rate
        FR%DDn(i) = FR%DDn(i)+FR%O(i) ! normal (opening) displacement discontinuity rate
        FR%DPsi(i) = FR%DPsi(i)+state_rate(FR,FR%V(i),FR%Psi(i),i,x(i),y(i),t)
-       FR%DNreg(i) = FR%DNreg(i)+regularize_N(FR,FR%V(i),FR%N(i),FR%Nreg(i),i,x(i),y(i))
+       if (FR%reg) then
+          FR%DNreg(i) = FR%DNreg(i)+regularize_N(FR,FR%V(i),FR%N(i),FR%Nreg(i),i,x(i),y(i))
+       else
+          FR%DNreg(i) = FR%DNreg(i)
+       end if
        FR%DW(i) = FR%DW(i)+FR%S(i)*FR%V(i) ! work rate
        call rupture_front(FR,FR%D(i),FR%V(i),t,FR%trup(i))
     end do
