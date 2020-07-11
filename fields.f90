@@ -656,6 +656,11 @@ contains
        
   end subroutine init_prestress_from_file
 
+  subroutine init_force_term_from_file(F,C,prestress_filename)
+    ! Abrahams Edit Edit
+  end subroutine init_force_term_from_file
+
+
 
   subroutine prestressIO(operation,filename,C,F)
 
