@@ -27,8 +27,9 @@ module fields
   end type block_fields
 
   type :: fields_type
-     character(256) :: problem,prestress_filename
-     logical :: displacement,energy_balance,peak,prestress_from_file
+     character(256) :: problem,prestress_filename,initial_condition_filename
+     logical ::
+displacement,energy_balance,peak,prestress_from_file,initial_condition_from_file
      integer :: nF,nC,nU,ns,nEP
      real :: Etot
      real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga,S0
@@ -78,9 +79,9 @@ contains
     logical,intent(in) :: energy_balance,displacement,pmlx,pmly,peak
 
     integer :: stat
-    logical :: prestress_from_file
+    logical :: prestress_from_file,initial_condition_from_file
     real :: Psi,vx0,vy0,vz0,sxx0,sxy0,sxz0,syy0,syz0,szz0
-    character(256) :: problem,prestress_filename
+    character(256) :: problem,prestress_filename,initial_condition_filename
     character(256) :: str
     ! P5 does not influence boundary conditions only interior
     type(fields_perturb) :: P1,P2,P3,P4,P5
@@ -90,7 +91,8 @@ contains
     namelist /fields_list/ problem,Psi,vx0,vy0,vz0, &
          sxx0,sxy0,sxz0,syy0,syz0,szz0, &
          P1,P2,P3,P4,P5, &
-         prestress_from_file,prestress_filename
+         prestress_from_file,prestress_filename, &
+         initial_condition_from_file,initial_condition_filename
 
     ! defaults
 
@@ -117,6 +119,9 @@ contains
 
     prestress_from_file = .false.
     prestress_filename = ''
+
+    initial_condition_from_file = .false.
+    initial_condition_filename = ''
     
     ! read in field parameters
 
@@ -212,6 +217,12 @@ contains
     
     if (prestress_from_file) call init_prestress_from_file(F,C,prestress_filename)
     
+    ! Abrahams (following prestress from file implementation)
+    ! initialize initial conditon, if input from file
+    ! Will be stored F%F0 for a initial field (but TBD)
+
+    if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
+
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
@@ -656,12 +667,6 @@ contains
        
   end subroutine init_prestress_from_file
 
-  subroutine init_force_term_from_file(F,C,prestress_filename)
-    ! Abrahams Edit Edit
-  end subroutine init_force_term_from_file
-
-
-
   subroutine prestressIO(operation,filename,C,F)
 
     use io, only : file_distributed,open_file_distributed, &
@@ -706,7 +711,75 @@ contains
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
 
   end subroutine prestressIO
+
   
+  subroutine init_initial_condition_from_file(F,C,initial_condition_filename)
+    ! Abrahams Edit
+    use mpi_routines2d, only : cartesian,allocate_array_body
+
+    implicit none
+
+    type(fields_type),intent(inout) :: F
+    type(cartesian),intent(in) :: C
+    character(*) :: initial_condition_filename
+
+    ! Need to check that this should be stored F%F0
+    if (.not.allocated(F%F0)) then
+       ! allocate array
+       call allocate_array_body(F%F0,C,F%nF,ghost_nodes=.false.)
+       ! read values from file
+       call initial_conditionIO('read',initial_condition_filename,C,F)
+    end if
+
+  end subroutine init_initial_condition_from_file
+
+
+  subroutine initial_conditionIO(operation,filename,C,F)
+
+    use io, only : file_distributed,open_file_distributed, &
+         read_file_distributed,write_file_distributed,close_file_distributed
+    use mpi_routines2d, only : cartesian
+    use mpi_routines, only : pw,is_master
+    use mpi
+
+    implicit none
+
+    character(*),intent(in) :: operation,filename
+    type(cartesian),intent(in) :: C
+    type(fields_type),intent(inout) :: F
+
+    type(file_distributed) :: fh
+    integer :: l,ierr
+
+    if (operation=='delete') then
+       if (is_master) call MPI_file_delete(filename,MPI_INFO_NULL,ierr)
+       return
+    end if
+
+    call
+open_file_distributed(fh,filename,operation,C%c2d%comm,C%c2d%array_w,pw)
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    select case(operation)
+    case('read')
+       do l = 1,F%nF
+          call  read_file_distributed(fh,F%F0(C%mx:C%px,C%my:C%py,l))
+       end do
+    case('write')
+       do l = 1,F%nF
+          call write_file_distributed(fh,F%F0(C%mx:C%px,C%my:C%py,l))
+       end do
+    end select
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    call close_file_distributed(fh)
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+  end subroutine initial_conditionIO
+
   
   subroutine init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,P5,M)
 
