@@ -30,6 +30,29 @@ ifeq ($(findstring Darwin,$(UNAME)),Darwin)
  INCL = -fall-intrinsics
 endif
 
+# Stanford maz
+#module load gnu8/8.3.0
+#module load openmpi3/3.1.4
+
+ifeq ($(findstring maz,$(HOST)),maz)
+ F95 = mpif90 -fdefault-real-8 -fdefault-double-8
+ LD = mpif90
+ ifeq ($(BUILD),debug)
+  F95FLAGS =  -g -O0 -init=snan,arrays -traceback -check all -check noarg_temp_created \
+        -warn all -ftrapuv -fpe0 -fp-stack-check -std03
+ endif
+ ifeq ($(BUILD),profile)
+  F95FLAGS = -g -pg
+ endif
+ ifeq ($(BUILD),production)
+  F95FLAGS = -g -O2
+ endif
+ LDFLAGS = $(F95FLAGS)
+ MKLPATH = /usr/local/intel_14/mkl
+ LIBS = -L$(MKLPATH) -Wl,--start-group -lmkl_intel_lp64 -lmkl_sequential \
+        -lmkl_core -Wl,--end-group
+ INCL =
+endif
 # Stanford CEES
 
 ifeq ($(findstring cees,$(HOST)),cees)

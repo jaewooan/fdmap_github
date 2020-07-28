@@ -28,8 +28,7 @@ module fields
 
   type :: fields_type
      character(256) :: problem,prestress_filename,initial_condition_filename
-     logical ::
-displacement,energy_balance,peak,prestress_from_file,initial_condition_from_file
+     logical :: displacement,energy_balance,peak,prestress_from_file,initial_condition_from_file
      integer :: nF,nC,nU,ns,nEP
      real :: Etot
      real,dimension(:,:,:),allocatable :: F,U,DU,DF,EP,pgv,pga,S0
@@ -718,15 +717,15 @@ contains
     use mpi_routines2d, only : cartesian,allocate_array_body
 
     implicit none
-
+!    type(bnd_fields),intent(inout) :: bndF
     type(fields_type),intent(inout) :: F
     type(cartesian),intent(in) :: C
     character(*) :: initial_condition_filename
 
     ! Need to check that this should be stored F%F0
-    if (.not.allocated(F%F0)) then
+    if (.not.allocated(F%U)) then
        ! allocate array
-       call allocate_array_body(F%F0,C,F%nF,ghost_nodes=.false.)
+       call allocate_array_body(F%U,C,F%nU,ghost_nodes=.false.)
        ! read values from file
        call initial_conditionIO('read',initial_condition_filename,C,F)
     end if
@@ -756,19 +755,18 @@ contains
        return
     end if
 
-    call
-open_file_distributed(fh,filename,operation,C%c2d%comm,C%c2d%array_w,pw)
+    call open_file_distributed(fh,filename,operation,C%c2d%comm,C%c2d%array_w,pw)
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
 
     select case(operation)
     case('read')
-       do l = 1,F%nF
-          call  read_file_distributed(fh,F%F0(C%mx:C%px,C%my:C%py,l))
+       do l = 1,F%nU
+          call  read_file_distributed(fh,F%U(C%mx:C%px,C%my:C%py,l))
        end do
     case('write')
-       do l = 1,F%nF
-          call write_file_distributed(fh,F%F0(C%mx:C%px,C%my:C%py,l))
+       do l = 1,F%nU
+          call write_file_distributed(fh,F%U(C%mx:C%px,C%my:C%py,l))
        end do
     end select
 
