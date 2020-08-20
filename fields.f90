@@ -218,7 +218,7 @@ contains
     
     ! Abrahams (following prestress from file implementation)
     ! initialize initial conditon, if input from file
-    ! Will be stored F%F0 for a initial field (but TBD)
+    ! Will be stored F%F for a initial field (but TBD)
 
     if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
 
@@ -722,10 +722,10 @@ contains
     type(cartesian),intent(in) :: C
     character(*) :: initial_condition_filename
 
-    ! Need to check that this should be stored F%F0
-    if (.not.allocated(F%U)) then
+    ! Need to check that this should be stored F%F
+    if (.not.allocated(F%F)) then
        ! allocate array
-       call allocate_array_body(F%U,C,F%nU,ghost_nodes=.false.)
+       call allocate_array_body(F%F,C,F%nF,ghost_nodes=.false.)
        ! read values from file
        call initial_conditionIO('read',initial_condition_filename,C,F)
     end if
@@ -761,12 +761,12 @@ contains
 
     select case(operation)
     case('read')
-       do l = 1,F%nU
-          call  read_file_distributed(fh,F%U(C%mx:C%px,C%my:C%py,l))
+       do l = 1,F%nF
+          call  read_file_distributed(fh,F%F(C%mx:C%px,C%my:C%py,l))
        end do
     case('write')
-       do l = 1,F%nU
-          call write_file_distributed(fh,F%U(C%mx:C%px,C%my:C%py,l))
+       do l = 1,F%nF
+          call write_file_distributed(fh,F%F(C%mx:C%px,C%my:C%py,l))
        end do
     end select
 
@@ -1008,6 +1008,9 @@ contains
        F(4) = F(4)+mms_hydrofrac(x,y,t,iblock,'sxy')
        F(5) = F(5)+mms_hydrofrac(x,y,t,iblock,'syy')
        F(6) = F(6)+mms_hydrofrac(x,y,t,iblock,'szz')
+    case('Abrahams')
+    !mode III only
+       F(1) = F(1) + 0.001*exp(-0.5*(x/((10/2)/4))**2 + -0.5*(y/((10/2)/4))**2)
     end select
 
   end subroutine initial_fields
