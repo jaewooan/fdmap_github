@@ -176,6 +176,7 @@ contains
 
     ! allocate memory for fields
 
+
     if (.not.allocated(F%F)) then
        call allocate_array_body(F%F ,C,F%nF,ghost_nodes=.true.)
        call allocate_array_body(F%DF,C,F%nF,ghost_nodes=.false.)
@@ -216,12 +217,6 @@ contains
     
     if (prestress_from_file) call init_prestress_from_file(F,C,prestress_filename)
     
-    ! Abrahams (following prestress from file implementation)
-    ! initialize initial conditon, if input from file
-    ! Will be stored F%F for a initial field (but TBD)
-
-    if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
-
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
@@ -275,6 +270,8 @@ contains
 
     end if
 
+    ! initialize initial conditon, if input from file
+    if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
   end subroutine init_fields
 
 
@@ -713,23 +710,15 @@ contains
 
   
   subroutine init_initial_condition_from_file(F,C,initial_condition_filename)
-    ! Abrahams Edit
     use mpi_routines2d, only : cartesian,allocate_array_body
 
     implicit none
-!    type(bnd_fields),intent(inout) :: bndF
+
     type(fields_type),intent(inout) :: F
     type(cartesian),intent(in) :: C
     character(*) :: initial_condition_filename
-
-    ! Need to check that this should be stored F%F
-    if (.not.allocated(F%F)) then
-       ! allocate array
-       call allocate_array_body(F%F,C,F%nF,ghost_nodes=.false.)
        ! read values from file
        call initial_conditionIO('read',initial_condition_filename,C,F)
-    end if
-
   end subroutine init_initial_condition_from_file
 
 
