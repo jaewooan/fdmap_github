@@ -216,7 +216,7 @@ contains
     ! to be input as separate (fault prestress) file.
     
     if (prestress_from_file) call init_prestress_from_file(F,C,prestress_filename)
-    
+
     ! initialize fields on sides of this block
 
     call init_fields_side(B%bndL,BF%bndFL,B%skip,B%my,B%py,F%nF,F%nU,F0,mode,problem, &
@@ -231,6 +231,9 @@ contains
     ! initialize fields in interior of this block
 
     call init_fields_interior(B,G,F,F0,mode,problem,t,iblock,P1,P2,P3,P4,P5,M)
+
+    ! initialize initial conditon, if input from file
+    if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
 
     deallocate(F0)
 
@@ -270,8 +273,8 @@ contains
 
     end if
 
-    ! initialize initial conditon, if input from file
-    if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
+    !! initialize initial conditon, if input from file
+    !if (initial_condition_from_file) call init_initial_condition_from_file(F,C,initial_condition_filename)
   end subroutine init_fields
 
 
@@ -998,8 +1001,10 @@ contains
        F(5) = F(5)+mms_hydrofrac(x,y,t,iblock,'syy')
        F(6) = F(6)+mms_hydrofrac(x,y,t,iblock,'szz')
     case('Abrahams')
-    !mode III only
-       F(1) = F(1) + 0.001*exp(-0.5*(x/((10/2)/4))**2 + -0.5*(y/((10/2)/4))**2)
+    ! mode III only
+    ! width = 0.1; % width of distrubiton
+    ! Displace_amplitude = 0.001;% amplitude
+       F(1) = F(1) + 0.001*exp(-0.5*(x/((0.1/2)/4))**2 + -0.5*(y/((0.1/2)/4))**2)
     end select
 
   end subroutine initial_fields
