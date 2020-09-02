@@ -30,9 +30,9 @@ ifeq ($(findstring Darwin,$(UNAME)),Darwin)
  INCL = -fall-intrinsics
 endif
 
-# Stanford CEES
+# Stanford mazama
 
-ifeq ($(findstring cees,$(HOST)),cees)
+ifeq ($(findstring maz,$(HOST)),maz)
  F95 = mpif90 -r8 -i4
  LD = mpif90
  ifeq ($(BUILD),debug)
