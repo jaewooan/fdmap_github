@@ -5,8 +5,10 @@ module source
   type :: source_type
      logical :: use_gravity,use_singular_source
      character(256) :: source_time_function
+     character(256) :: problem
      real :: gx,gy,gz ! components of gravitational acceleration
      real :: x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy ! point force and moment tensor
+     real :: tmax,width,disAmp !Tsunami forcing Gaussian in space and time
   end type source_type
 
 contains
@@ -26,8 +28,12 @@ contains
     character(256) :: source_time_function
     integer :: stat
 
-    namelist /source_list/ gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,source_time_function
+    character(256) :: problem
+    real :: tmax,width,disAmp
+!Tsunami forcing Gaussian in space and time
 
+    namelist /source_list/ problem,tmax,width,disAmp, &
+            gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,source_time_function
     ! defaults
 
     gx = 0d0
@@ -50,6 +56,11 @@ contains
     Mzy = 0d0
 
     source_time_function = 'gaussian'
+    problem = ''
+
+    disAmp = 0d0
+    tmax = 0d0
+    width = 0d0
 
     ! read in source parameters
         
@@ -81,7 +92,12 @@ contains
     S%Mzy = Mzy
 
     S%source_time_function = source_time_function
-    
+
+    S%problem = problem
+    S%disAmp = disAmp
+    S%tmax = tmax
+    S%width = width  
+
     ! output source parameters
 
     if (is_master) then
@@ -101,6 +117,10 @@ contains
        call write_matlab(echo,'Mzx',S%Mzx,'S')
        call write_matlab(echo,'Mzy',S%Mzy,'S')
        call write_matlab(echo,'source_time_function',S%source_time_function,'S')
+       call write_matlab(echo,'problem',S%problem,'S')
+       call write_matlab(echo,'disAmp',S%disAmp,'S')
+       call write_matlab(echo,'tmax',S%tmax,'S')
+       call write_matlab(echo,'width',S%width,'S')
     end if
 
   end subroutine init_source
@@ -136,6 +156,7 @@ contains
     logical :: outx,outy
     real :: hx,hy,ax,ay,dx,dy,wx,wy,A
 
+    real :: sigma, sigmat
     if (B%skip) return ! process has no cells in this block
 
     if (S%use_gravity) then
@@ -256,6 +277,23 @@ contains
              F%DF(i,j,4) = F%DF(i,j,4) + inplane_fault_mms(x,y,t,iblock,'s_sxy')
              F%DF(i,j,5) = F%DF(i,j,5) + inplane_fault_mms(x,y,t,iblock,'s_syy')
              F%DF(i,j,6) = F%DF(i,j,6) + inplane_fault_mms(x,y,t,iblock,'s_szz')
+          end do
+       end do
+    end select
+
+    select case(S%problem)
+    case('Forcing') !Abrahams
+       do j = B%my,B%py
+          do i = B%mx,B%px
+             x = G%x(i,j)
+             y = G%y(i,j)
+
+             sigma = (S%width/2)/4
+             sigmat = (S%tmax/2)/4
+             F%DF(i,j,1) = F%DF(i,j,1) + &            
+               S%disAmp *exp(-0.5*(x/sigma)**2 - 0.5*(y/sigma)**2) * &
+               exp(-0.5*((t-S%tmax/2)/sigmat)**2) * &
+              (1/(sigmat*sqrt(2*pi)))*1/erf(S%tmax/(sigmat*2**(3/2)))
           end do
        end do
     end select

@@ -31,8 +31,9 @@ ifeq ($(findstring Darwin,$(UNAME)),Darwin)
 endif
 
 # Stanford maz
-#module load gnu8/8.3.0
-#module load openmpi3/3.1.4
+# module purge
+# module load gnu8/8.3.0
+# module load openmpi3/3.1.4
 
 ifeq ($(findstring maz,$(HOST)),maz)
  F95 = mpif90 -fdefault-real-8 -fdefault-double-8

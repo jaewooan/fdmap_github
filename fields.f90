@@ -947,6 +947,7 @@ contains
     character(*),intent(in) :: problem
     integer,intent(in) :: iblock
     type(block_material), intent(in) :: M
+    real :: tmax,width,Displace_amplitude,sigma,sigmat,pi
 
     select case(problem)
     case('inplane-fault-mms','inplane-fault-mms-nostate')
@@ -999,12 +1000,6 @@ contains
        F(3) = F(3)+mms_hydrofrac(x,y,t,iblock,'sxx')
        F(4) = F(4)+mms_hydrofrac(x,y,t,iblock,'sxy')
        F(5) = F(5)+mms_hydrofrac(x,y,t,iblock,'syy')
-       F(6) = F(6)+mms_hydrofrac(x,y,t,iblock,'szz')
-    case('Abrahams')
-    ! mode III only
-    ! width = 0.1; % width of distrubiton
-    ! Displace_amplitude = 0.001;% amplitude
-       F(1) = F(1) + 0.001*exp(-0.5*(x/((0.1/2)/4))**2 + -0.5*(y/((0.1/2)/4))**2)
     end select
 
   end subroutine initial_fields
