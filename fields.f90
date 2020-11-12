@@ -410,16 +410,13 @@ contains
            call write_file_distributed(fh,F%EP(C%mx:C%px,C%my:C%py,l))
          end do
        end if
-
-      if (adjoint) then
-
-       select case(mode)
+       if (adjoint) then
+          select case(mode)
           case(2)
              F%F(:,:,1:2) = -F%F(:,:,1:2)
           case(3)
              F%F(:,:,1) = -F%F(:,:,1)
           end select
-
        end if
     end select
 
@@ -666,6 +663,7 @@ contains
        
   end subroutine init_prestress_from_file
 
+  
   subroutine prestressIO(operation,filename,C,F)
 
     use io, only : file_distributed,open_file_distributed, &
@@ -720,8 +718,10 @@ contains
     type(fields_type),intent(inout) :: F
     type(cartesian),intent(in) :: C
     character(*) :: initial_condition_filename
-       ! read values from file
-       call initial_conditionIO('read',initial_condition_filename,C,F)
+
+    ! read values from file
+    call initial_conditionIO('read',initial_condition_filename,C,F)
+    
   end subroutine init_initial_condition_from_file
 
 
@@ -947,7 +947,6 @@ contains
     character(*),intent(in) :: problem
     integer,intent(in) :: iblock
     type(block_material), intent(in) :: M
-    real :: tmax,width,Displace_amplitude,sigma,sigmat,pi
 
     select case(problem)
     case('inplane-fault-mms','inplane-fault-mms-nostate')

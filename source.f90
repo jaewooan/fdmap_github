@@ -157,6 +157,7 @@ contains
     real :: hx,hy,ax,ay,dx,dy,wx,wy,A
 
     real :: sigma, sigmat
+    
     if (B%skip) return ! process has no cells in this block
 
     if (S%use_gravity) then
@@ -283,19 +284,22 @@ contains
 
     select case(S%problem)
     case('Forcing') !Abrahams
-       do j = B%my,B%py
-          do i = B%mx,B%px
-             x = G%x(i,j)
-             y = G%y(i,j)
-
-             sigma = (S%width/2)/4
-             sigmat = (S%tmax/2)/4
-             F%DF(i,j,1) = F%DF(i,j,1) + &            
-               S%disAmp *exp(-0.5*(x/sigma)**2 - 0.5*(y/sigma)**2) * &
-               exp(-0.5*((t-S%tmax/2)/sigmat)**2) * &
-              (1/(sigmat*sqrt(2*pi)))*1/erf(S%tmax/(sigmat*2**(3/2)))
+       select case(mode)
+       case(2)
+       case(3)
+          do j = B%my,B%py
+             do i = B%mx,B%px
+                x = G%x(i,j)
+                y = G%y(i,j)
+                sigma = (S%width/2d0)/4d0
+                sigmat = (S%tmax/2d0)/4d0
+                F%DF(i,j,1) = F%DF(i,j,1) + &            
+                     S%disAmp *exp(-0.5d0*(x/sigma)**2 - 0.5d0*(y/sigma)**2) * &
+                     exp(-0.5d0*((t-S%tmax/2d0)/sigmat)**2) / &
+                     (sigmat*sqrt(2d0*pi))
+             end do
           end do
-       end do
+       end select
     end select
 
   end subroutine set_source
