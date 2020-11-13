@@ -437,7 +437,6 @@ contains
     ! read values from file (at initial time, adjusting if restarting from checkpoint
     
     offset = int(checkpoint_number,kind(offset))*int(C%nx,kind(offset))*int(C%ny,kind(offset))*int(pw,kind(offset))
-    print *, offset,checkpoint_number
     call open_file_distributed(S%fh,S%forcing_filename,'read',C%c2d%comm,C%c2d%array_w,pw,offset)
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
@@ -448,7 +447,6 @@ contains
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
 
-    
   end subroutine init_forcing_from_file
 
 
@@ -468,7 +466,7 @@ contains
   end subroutine destroy_forcing
 
   
-  subroutine load_forcing(F,C,S)
+  subroutine load_forcing(F,C,S,t,dt)
 
     use mpi_routines2d, only : cartesian
     use fields, only : fields_type
@@ -480,10 +478,15 @@ contains
     type(fields_type),intent(in) :: F
     type(cartesian),intent(in) :: C
     type(source_type),intent(inout) :: S
-
+    real,intent(in) :: t,dt
+    
     integer :: l,ierr
 
     if (.not.S%forcing_from_file) return
+
+    ! save time for use in interpolation
+    S%t_old = t
+    S%t_new = t+dt
     
     ! overwrite old rate with previous new rate
     S%forcing_old = S%forcing_new

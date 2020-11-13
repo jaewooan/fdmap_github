@@ -97,7 +97,7 @@ contains
 
     ! load forcing at time t0+dt (for linear interpolation)
     
-    call load_forcing(D%F,D%C,D%S)
+    call load_forcing(D%F,D%C,D%S,t0,dt)
     
     ! loop over RK stages
 
