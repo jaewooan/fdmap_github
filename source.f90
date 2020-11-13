@@ -206,8 +206,6 @@ contains
        hx = G%x(B%mx+1,B%my)-G%x(B%mx,B%my)
        hy = G%y(B%mx,B%my+1)-G%y(B%mx,B%my)
 
-       !print *, myid,i0,j0,G%x(i0,j0),G%y(i0,j0)
-
        ax = (S%x0-G%x(i0,B%my))/hx
        ay = (S%y0-G%y(B%mx,j0))/hy
 
@@ -316,7 +314,7 @@ contains
 
     if (S%forcing_from_file) then
        ! linearly interpolate in time
-       weight_old = (t-S%t_old)/(S%t_new-S%t_old)
+       weight_old = (S%t_new-t)/(S%t_new-S%t_old)
        weight_new = 1d0-weight_old
        F%DF(B%mx:B%px,B%my:B%py,:) = F%DF(B%mx:B%px,B%my:B%py,:) + &
             weight_old*S%forcing_old(B%mx:B%px,B%my:B%py,:) + &

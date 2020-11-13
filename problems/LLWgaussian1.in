@@ -34,7 +34,7 @@
  problem = 'Forcing',
  gauss_amp = 1d0,
  gauss_sigma = 1.25d0,
- gauss_sigmat = 0.125d0 
+ gauss_sigmat = 2d0 
  /
 
 &material_list

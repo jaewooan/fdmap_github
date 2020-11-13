@@ -8,7 +8,7 @@ filename = 'LLWgaussian.forcing';
 
 gauss_amp = 1;
 gauss_sigma = 1.25;
-gauss_sigmat = 0.125;
+gauss_sigmat = 2;
 
 % anonymous function to faciliate evaluation
 gauss = @(x,y,t) gauss_amp*exp(-0.5*(x/gauss_sigma).^2 - 0.5*(y/gauss_sigma).^2) .* exp(-0.5*((t-4*gauss_sigmat)/gauss_sigmat).^2) / (gauss_sigmat*sqrt(2*pi));
