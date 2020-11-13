@@ -1,0 +1,54 @@
+
+&problem_list
+ name = 'data/LLWgaussian1', ! problem name (prefix to all files, including path)
+ ninfo = 10,  ! print update on timing to stdout every ninfo time steps
+ nt = 101,   ! total number of time steps
+ CFL = 0.5d0, ! CFL parameter (sets time step for stability)
+ refine = 1d0 ! space/time refinement factor, increase for more accurate solution
+ /
+
+&domain_list
+ mode = 3, ! 2 = plane strain, 3 = antiplane shear
+ nx = 101, ny = 101, ! number of grid points in global mesh
+ nblocks = 1 ! number of blocks
+ /
+
+!---BLOCK1---
+
+&grid_list
+ nx = 101, ny = 101, ! number of grid points in this block
+ LT = -50d0,  50d0, ! (x,y) coordinates of left top corner
+ RT =  50d0,  50d0, ! right top corner
+ LB = -50d0, -50d0, ! left bottom corner
+ RB =  50d0, -50d0  ! right bottom corner
+ /
+
+&boundaries_list
+ bcL = 'absorbing', ! boundary condition on left side
+ bcR = 'absorbing', ! right side
+ bcB = 'absorbing', ! bottom side
+ bcT = 'absorbing'  ! top side (set to none for interface)
+ /
+
+&source_list
+ problem = 'Forcing',
+ gauss_amp = 1d0,
+ gauss_sigma = 1.25d0,
+ gauss_sigmat = 0.125d0 
+ /
+
+&material_list
+ rho = 1d0, cs = 0.2d0 /
+
+!---begin:output_list---
+B
+body
+x y
+0d0 0d0 1
+B
+body
+vz sxz syz
+0d0 1d10 5
+!---end:output_list---
+
+

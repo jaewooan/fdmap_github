@@ -463,7 +463,7 @@ contains
     if (allocated(S%forcing_old)) deallocate(S%forcing_old)
     if (allocated(S%forcing_new)) deallocate(S%forcing_new)
 
-    call close_file_distributed(S%fh)
+    if (S%forcing_from_file) call close_file_distributed(S%fh)
     
   end subroutine destroy_forcing
 
