@@ -20,7 +20,7 @@ ifeq ($(findstring Darwin,$(UNAME)),Darwin)
  LD = mpif90
  ifeq ($(BUILD),debug)
   F95FLAGS = -g -Wall -Wextra -Wconversion -fbounds-check -fbacktrace \
-	-fimplicit-none -std=f2003
+	-fimplicit-none -std=f2003 -Wno-compare-reals
  endif
  ifeq ($(BUILD),production)
   F95FLAGS = -O5 -Wuninitialized

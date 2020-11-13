@@ -1,39 +1,47 @@
 module source
 
+  use io, only : file_distributed
+  
   implicit none
 
   type :: source_type
-     logical :: use_gravity,use_singular_source
-     character(256) :: source_time_function
-     character(256) :: problem
+     logical :: use_gravity,use_singular_source,forcing_from_file
+     character(256) :: source_time_function,problem,forcing_filename
      real :: gx,gy,gz ! components of gravitational acceleration
      real :: x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy ! point force and moment tensor
-     real :: tmax,width,disAmp !Tsunami forcing Gaussian in space and time
+     real :: gauss_amp,gauss_sigma,gauss_sigmat ! tsunami forcing, Gaussian in space and time
+     real,dimension(:,:,:),allocatable :: forcing_old,forcing_new ! time-dependent forcing from file
+     real :: t_old,t_new ! time-dependent forcing from file
+     type(file_distributed) :: fh
   end type source_type
 
 contains
 
 
-  subroutine init_source(S,input,echo)
+  subroutine init_source(F,C,checkpoint_number,S,input,echo)
 
     use mpi_routines, only : is_master
+    use mpi_routines2d, only : cartesian
     use io, only : error,write_matlab
+    use fields, only : fields_type
 
     implicit none
-    
+
+    type(fields_type),intent(in) :: F
+    type(cartesian),intent(in) :: C
+    integer,intent(in) :: checkpoint_number
     type(source_type),intent(out) :: S
     integer,intent(in) :: input,echo
 
-    real :: gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy
-    character(256) :: source_time_function
+    logical :: forcing_from_file
+    real :: gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,gauss_amp,gauss_sigma,gauss_sigmat
+    character(256) :: source_time_function,problem,forcing_filename
     integer :: stat
 
-    character(256) :: problem
-    real :: tmax,width,disAmp
-!Tsunami forcing Gaussian in space and time
-
-    namelist /source_list/ problem,tmax,width,disAmp, &
-            gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,source_time_function
+    namelist /source_list/ problem,gauss_amp,gauss_sigma,gauss_sigmat, &
+         gx,gy,gz,x0,y0,t_duration,t_center,Fx,Fy,Fz,Mxx,Mxy,Myy,Mzx,Mzy,source_time_function, &
+         forcing_from_file,forcing_filename
+         
     ! defaults
 
     gx = 0d0
@@ -56,12 +64,15 @@ contains
     Mzy = 0d0
 
     source_time_function = 'gaussian'
+
     problem = ''
+    gauss_amp = 0d0
+    gauss_sigma = 0d0
+    gauss_sigmat = 0d0
 
-    disAmp = 0d0
-    tmax = 0d0
-    width = 0d0
-
+    forcing_from_file = .false.
+    forcing_filename = ''
+    
     ! read in source parameters
         
     rewind(input)
@@ -94,10 +105,15 @@ contains
     S%source_time_function = source_time_function
 
     S%problem = problem
-    S%disAmp = disAmp
-    S%tmax = tmax
-    S%width = width  
+    S%gauss_amp = gauss_amp
+    S%gauss_sigma = gauss_sigma
+    S%gauss_sigmat = gauss_sigmat
 
+    S%forcing_from_file = forcing_from_file
+    S%forcing_filename = forcing_filename
+
+    if (S%forcing_from_file) call init_forcing_from_file(F,C,S,checkpoint_number)
+    
     ! output source parameters
 
     if (is_master) then
@@ -118,9 +134,11 @@ contains
        call write_matlab(echo,'Mzy',S%Mzy,'S')
        call write_matlab(echo,'source_time_function',S%source_time_function,'S')
        call write_matlab(echo,'problem',S%problem,'S')
-       call write_matlab(echo,'disAmp',S%disAmp,'S')
-       call write_matlab(echo,'tmax',S%tmax,'S')
-       call write_matlab(echo,'width',S%width,'S')
+       call write_matlab(echo,'gauss_amp',S%gauss_amp,'S')
+       call write_matlab(echo,'gauss_sigmat',S%gauss_sigmat,'S')
+       call write_matlab(echo,'gauss_sigma',S%gauss_sigma,'S')
+       call write_matlab(echo,'forcing_from_file',S%forcing_from_file,'S')
+       call write_matlab(echo,'forcing_filename',S%forcing_filename,'S')
     end if
 
   end subroutine init_source
@@ -135,8 +153,6 @@ contains
     use material, only : block_material
     use utilities, only : search_binary
     
-    !USE MPI_ROUTINES, ONLY : MYID
-
     implicit none
 
     type(block_grid),intent(in) :: B
@@ -155,8 +171,7 @@ contains
     integer :: i0,j0,mm,pp
     logical :: outx,outy
     real :: hx,hy,ax,ay,dx,dy,wx,wy,A
-
-    real :: sigma, sigmat
+    real :: weight_old,weight_new
     
     if (B%skip) return ! process has no cells in this block
 
@@ -283,7 +298,7 @@ contains
     end select
 
     select case(S%problem)
-    case('Forcing') !Abrahams
+    case('Forcing') ! tsunami forcing
        select case(mode)
        case(2)
        case(3)
@@ -291,17 +306,23 @@ contains
              do i = B%mx,B%px
                 x = G%x(i,j)
                 y = G%y(i,j)
-                sigma = (S%width/2d0)/4d0
-                sigmat = (S%tmax/2d0)/4d0
                 F%DF(i,j,1) = F%DF(i,j,1) + &            
-                     S%disAmp *exp(-0.5d0*(x/sigma)**2 - 0.5d0*(y/sigma)**2) * &
-                     exp(-0.5d0*((t-S%tmax/2d0)/sigmat)**2) / &
-                     (sigmat*sqrt(2d0*pi))
+                     S%gauss_amp*exp(-0.5d0*(x/S%gauss_sigma)**2 - 0.5d0*(y/S%gauss_sigma)**2) * &
+                     exp(-0.5d0*((t-4d0*S%gauss_sigmat)/S%gauss_sigmat)**2) / (S%gauss_sigmat*sqrt(2d0*pi))
              end do
           end do
        end select
     end select
 
+    if (S%forcing_from_file) then
+       ! linearly interpolate in time
+       weight_old = (t-S%t_old)/(S%t_new-S%t_old)
+       weight_new = 1d0-weight_old
+       F%DF(B%mx:B%px,B%my:B%py,:) = F%DF(B%mx:B%px,B%my:B%py,:) + &
+            weight_old*S%forcing_old(B%mx:B%px,B%my:B%py,:) + &
+            weight_new*S%forcing_new(B%mx:B%px,B%my:B%py,:)
+    end if
+       
   end subroutine set_source
 
 
@@ -387,4 +408,97 @@ contains
   end subroutine singular_source
 
 
+  subroutine init_forcing_from_file(F,C,S,checkpoint_number)
+
+    use mpi_routines2d, only : cartesian,allocate_array_body
+    use mpi_routines, only : pw
+    use mpi
+    use io, only : read_file_distributed,open_file_distributed
+    use fields, only : fields_type
+    
+    implicit none
+
+    type(fields_type),intent(in) :: F
+    type(cartesian),intent(in) :: C
+    type(source_type),intent(inout) :: S
+    integer,intent(in) :: checkpoint_number
+    
+    integer(MPI_OFFSET_KIND) :: offset
+    integer :: l,ierr
+
+    if (.not.S%forcing_from_file) return
+    
+    if (.not.allocated(S%forcing_old)) then
+       ! allocate arrays
+       call allocate_array_body(S%forcing_old,C,F%nF,ghost_nodes=.false.)
+       call allocate_array_body(S%forcing_new,C,F%nF,ghost_nodes=.false.)
+    end if
+
+    ! read values from file (at initial time, adjusting if restarting from checkpoint
+    
+    offset = int(checkpoint_number,kind(offset))*int(C%nx,kind(offset))*int(C%ny,kind(offset))*int(pw,kind(offset))
+    print *, offset,checkpoint_number
+    call open_file_distributed(S%fh,S%forcing_filename,'read',C%c2d%comm,C%c2d%array_w,pw,offset)
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    do l = 1,F%nF
+       call read_file_distributed(S%fh,S%forcing_new(C%mx:C%px,C%my:C%py,l))
+    end do
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    
+  end subroutine init_forcing_from_file
+
+
+  subroutine destroy_forcing(S)
+
+    use io, only : close_file_distributed
+    
+    implicit none
+
+    type(source_type),intent(inout) :: S
+
+    if (allocated(S%forcing_old)) deallocate(S%forcing_old)
+    if (allocated(S%forcing_new)) deallocate(S%forcing_new)
+
+    call close_file_distributed(S%fh)
+    
+  end subroutine destroy_forcing
+
+  
+  subroutine load_forcing(F,C,S)
+
+    use mpi_routines2d, only : cartesian
+    use fields, only : fields_type
+    use io, only : read_file_distributed
+    use mpi
+    
+    implicit none
+
+    type(fields_type),intent(in) :: F
+    type(cartesian),intent(in) :: C
+    type(source_type),intent(inout) :: S
+
+    integer :: l,ierr
+
+    if (.not.S%forcing_from_file) return
+    
+    ! overwrite old rate with previous new rate
+    S%forcing_old = S%forcing_new
+
+    ! read new rate from file
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+    do l = 1,F%nF
+       call read_file_distributed(S%fh,S%forcing_new(C%mx:C%px,C%my:C%py,l))
+    end do
+
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+
+  end subroutine load_forcing
+
+  
 end module source

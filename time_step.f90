@@ -76,6 +76,7 @@ contains
     use energy, only : energy_interior,energy_block
     use plastic, only : update_fields_plastic
     use interfaces, only : update_fields_iface_implicit
+    use source, only : load_forcing
     use output, only : output_list,write_output
     use io, only : error
 
@@ -94,6 +95,10 @@ contains
     
     t0 = D%t
 
+    ! load forcing at time t0+dt (for linear interpolation)
+    
+    call load_forcing(D%F,D%C,D%S)
+    
     ! loop over RK stages
 
     do stage = 1,RK%nstage

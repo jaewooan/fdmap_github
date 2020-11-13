@@ -299,8 +299,8 @@ contains
 
     ! source term parameters
 
-    call init_source(D%S,input,echo)
-
+    call init_source(D%F,D%C,D%n,D%S,input,echo)
+    
     ! acoustic gravity waves
 
     if (D%acoustic_gravity_waves) call init_acoustic_gravity(D%AG,D%C,input,echo)
@@ -387,6 +387,7 @@ contains
     use interfaces, only : destroy_iface
     use acoustic_gravity, only : destroy_acoustic_gravity
     use basal_traction, only : destroy_basal_traction
+    use source, only : destroy_forcing
     
     implicit none
 
@@ -411,7 +412,8 @@ contains
     call destroy_elastic(D%E)
     call destroy_acoustic_gravity(D%AG)
     call destroy_basal_traction(D%BT)
-
+    call destroy_forcing(D%S)
+    
   end subroutine finish_domain
 
 
