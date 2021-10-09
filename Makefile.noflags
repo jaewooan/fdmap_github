@@ -1,0 +1,109 @@
+# Executables
+
+Exe = fdmap
+IOExe = testio
+
+# Files
+
+Files = acoustic_gravity.f90 basal_traction.f90 boundaries.f90 checkpoint.f90 \
+	domain.f90 energy.f90 interfaces.f90 fd.f90 fd_coeff.f90 friction.f90 \
+	fields.f90 geometry.f90 grid.f90 hydrofrac.f90 io.f90 main.f90 material.f90 \
+	mms.f90 mpi_routines.f90 mpi_routines2d.f90 output.f90 plastic.f90 \
+	rates.f90 rates_heterogeneous.f90 source.f90 thermpres.f90 \
+	time_step.f90 tsunami.f90 utilities.f90
+
+IOFiles = io.f90 mpi_routines.f90 mpi_routines2d.f90 testio.f90
+
+Obs = 	$(Files:.f90=.o)
+
+IOObs = $(IOFiles:.f90=.o)
+
+all: code iotest
+
+code: $(Exe)
+
+iotest: $(IOExe)
+
+$(Exe): $(Obs)
+	$(LD) $(LDFLAGS) -o $(Exe) \
+	$(Obs) $(LIBS)
+
+$(IOExe): $(IOObs)
+	$(LD) $(LDFLAGS) -o $(IOExe) \
+	$(IOObs) $(LIBS)
+
+%.o : %.f90
+	$(MPIFC) $(FCFLAGS) -c $< -o $@ $(INCL)
+
+clean:
+	rm -f *.o *.mod $(Exe) $(IOExe)
+
+.SUFFIXES: .o .f90
+
+# DO NOT DELETE THIS LINE - used by make depend
+acoustic_gravity.o: fields.o io.o material.o mpi_routines.o mpi_routines2d.o
+
+basal_traction.o: fields.o io.o mpi_routines.o mpi_routines2d.o
+
+boundaries.o: fields.o geometry.o grid.o io.o mms.o mpi_routines.o tsunami.o
+
+checkpoint.o: domain.o fields.o interfaces.o io.o mpi_routines.o
+
+domain.o: acoustic_gravity.o basal_traction.o boundaries.o fd_coeff.o fields.o
+domain.o: grid.o interfaces.o io.o material.o mpi_routines.o mpi_routines2d.o
+domain.o: source.o utilities.o
+
+energy.o: domain.o fields.o geometry.o grid.o material.o mpi_routines.o
+energy.o: mpi_routines2d.o
+
+fd.o: fd_coeff.o io.o
+
+fd_coeff.o: io.o
+
+fields.o: fd.o geometry.o grid.o io.o material.o mms.o mpi_routines.o
+fields.o: mpi_routines2d.o utilities.o
+
+friction.o: geometry.o io.o material.o mms.o mpi_routines.o utilities.o
+
+geometry.o: io.o
+
+grid.o: fd.o fd_coeff.o geometry.o io.o mpi_routines.o mpi_routines2d.o
+grid.o: utilities.o
+
+hydrofrac.o: fd.o fd_coeff.o io.o mms.o mpi_routines.o mpi_routines2d.o
+
+interfaces.o: fields.o friction.o geometry.o grid.o hydrofrac.o io.o mms.o
+interfaces.o: mpi_routines.o mpi_routines2d.o thermpres.o
+
+io.o: mpi_routines.o
+
+main.o: checkpoint.o domain.o io.o mpi_routines.o output.o time_step.o
+main.o: utilities.o
+
+material.o: io.o mpi_routines.o mpi_routines2d.o
+
+mms.o: io.o material.o
+
+
+mpi_routines2d.o: io.o mpi_routines.o
+
+output.o: domain.o io.o mpi_routines.o utilities.o
+
+plastic.o: fields.o grid.o io.o material.o
+
+rates.o: fd_coeff.o material.o
+
+rates_heterogeneous.o: fd_coeff.o
+
+source.o: fields.o grid.o io.o material.o mms.o mpi_routines.o utilities.o
+
+testio.o: io.o mpi_routines.o mpi_routines2d.o
+
+thermpres.o: io.o mpi_routines.o
+
+time_step.o: acoustic_gravity.o basal_traction.o domain.o energy.o fields.o
+time_step.o: grid.o interfaces.o io.o material.o mpi_routines2d.o output.o
+time_step.o: plastic.o rates.o rates_heterogeneous.o source.o
+
+
+utilities.o: io.o
