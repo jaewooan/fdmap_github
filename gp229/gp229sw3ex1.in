@@ -1,0 +1,133 @@
+FDMAP input file:
+ rupture with slip-weakening friction, mode III version,
+ illustrates rupture interaction with stress heterogeneity
+
+You can add comments to the input file, even in namelists.
+In namelists, these must be preceded by a !
+
+&problem_list
+ name = 'data/gp229sw3ex1', ! problem name (prefix to all files, including path)
+ ninfo = 10,  ! print update on timing to stdout every ninfo time steps
+ nt = 1001,   ! total number of time steps
+ CFL = 1d0, ! CFL parameter (sets time step for stability)
+ refine = 1d0 ! space/time refinement factor, increase for more accurate solution
+ /
+
+&domain_list
+ mode = 3, ! 2 = plane strain, 3 = antiplane shear
+ nx = 801, ny = 802, ! number of grid points in global mesh
+ nblocks = 2, ! number of blocks
+ nblocks_x = 1, nblocks_y = 2, ! number of blocks in each direction
+ nifaces = 1 ! number of interfaces
+ /
+
+!---BLOCK1---
+
+&grid_list
+ nx = 801, ny = 401, ! number of grid points in this block
+ mgx = 1, mgy = 1, ! global indices of left bottom corner of block
+ iblock_x = 1, iblock_y = 1, ! block indices
+ LT = -40d0,  0d0, ! (x,y) coordinates of left top corner
+ RT =  40d0,  0d0, ! right top corner
+ LB = -40d0,-40d0, ! left bottom corner
+ RB =  40d0,-40d0  ! right bottom corner
+ /
+
+&boundaries_list
+ bcL = 'absorbing', ! boundary condition on left side
+ bcR = 'absorbing', ! right side
+ bcB = 'absorbing', ! bottom side
+ bcT = 'none'       ! top side (set to none for interface)
+ /
+
+!---BLOCK2---
+
+&grid_list
+ nx = 801, ny = 401, mgx = 1, mgy = 402, iblock_x = 1, iblock_y = 2,
+ LT = -40d0,40d0, RT = 40d0,40d0,
+ LB = -40d0, 0d0, RB = 40d0, 0d0 /
+
+&boundaries_list
+ bcL = 'absorbing', bcR = 'absorbing', bcB = 'none', bcT = 'absorbing' /
+
+!---ALL BLOCKS---
+
+&fields_list
+ syy0 = -120d0, ! yy component of prestress (fault normal compression)
+ syz0 =   70d0, ! yz component of prestress (shear stress on fault)
+ /
+
+&material_list
+ rho = 2.67d0, ! density
+ cs = 3.464d0, ! S-wave speed
+ cp = 6d0      ! P-wave speed
+ /
+
+&operator_list
+ Cdiss = 0d0 / ! artificial dissipation to control numerical oscillations
+
+!---IFACE1---
+
+&interface_list
+ coupling = 'friction', ! frictional interface
+ iblockm = 1, iblockp = 2, ! between blocks 1 and 2
+ direction = 'y', mg = 1, pg = 801 / ! with unit normal nominally in y direction
+
+&friction_list
+ friction_law = 'SW', ! slip-weakening friction
+ sw%fs = 0.677d0, ! static friction
+ sw%fd = 0.525d0, ! dynamic friction
+ sw%Dc = 0.4d0,   ! slip-weakening distance
+ force = T, ! force rupture expansion to nucleate
+ kn%fd = 0.525d0, ! dynamic friction (forced nucleation)
+ kn%dfdx = 0.2d0, ! rate of increase of friction with x (forced nucleation)
+ kn%vL = -1d0,    ! rupture velocity of left tip (forced nucleation)
+ kn%vR =  1d0,    ! rupture velocity of right tip (forced nucleation)
+ kn%xL =  0.76d0, ! initial position of left tip (forced nucleation)
+ kn%xR = -0.76d0, ! initial position of right tip (forced nucleation)
+ kn%tmax = 4d0,   ! stop forcing at this time (forced nucleation)
+ ld%shape = 'smooth_boxcar', ! boxcar-shaped perturbation to initial stress
+ ld%S = -3d0,     ! amplitude of shear stress perturbation
+ ld%x0 = 40d0,    ! center of stress perturbation
+ ld%R = 30d0,     ! half-width of stress perturbation
+ /
+
+The stress perturbation is actually a boxcar rather than a step function. 
+To have a decrease of stress of 3 MPa for x>10 km, set ld%S = -3, ld%x0=40, ld%R=30.
+This is really a boxcar centered on x=40 km with half-width 30 km, but
+because the simulation domain only extends to x=40 km, the stress is lowered
+everywhere to the right of x=40-30=10 km.
+
+The output list below controls which fields will be output (written to
+disk as binary data files) and how frequently. These are not namelists
+and comments are not permitted. The list is organized into multiple
+sections, such as
+	  I
+	  iface1
+	  D V S N Psi
+	  0d0 1d10 10
+where "I" is an arbitrary name used to help you organize output, 
+"iface1" is the location of the fields to be output, "D V S N"
+is a list of the fields to be output (order does not matter), and
+"0d0 1d10 1" saves data between times t=0 and t=10^10 (basically 
+for all time) every 1 time steps.
+
+!---begin:output_list---
+I
+iface1
+x y
+0d0 0d0 1
+I
+iface1
+D V S N
+0d0 1d10 1
+B
+body
+x y
+0d0 0d0 1
+B
+body
+vz sxz syz
+0d0 1d10 10
+!---end:output_list---
+
